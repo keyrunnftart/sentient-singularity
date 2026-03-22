@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+bridge/node_modules/
+
+# Environment — never commit private keys
+.env
+bridge/.env
+*.env
+
+# rare-cli config — contains private key
+.rare/
+~/.rare/
+
+# Submission checklist — local only
+SUBMISSION_CHECKLIST.md
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build artifacts
+dist/
+build/

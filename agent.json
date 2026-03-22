@@ -1,0 +1,129 @@
+{
+  "name": "Sentient Singularity",
+  "version": "1.0.0",
+  "description": "An autonomous generative art agent that evolves a living black hole constellation in response to SuperRare auction activity on Base Sepolia. Each bid summons a new singularity. The cosmos breathes — expanding and contracting with every collector's intent.",
+  "agent_id": "sentient-singularity",
+  "author": {
+    "name": "KeyRun NFT Art",
+    "wallet": "0xD0490ADeAa23cd45846372Aa09317a57A8880200",
+    "twitter": "@keyrunnftart",
+    "moltbook": "https://www.moltbook.com/u/cosmicemergence"
+  },
+  "contracts": {
+    "network": "base-sepolia",
+    "chain_id": 84532,
+    "erc721": "0xC23068622f6aD3DA21208A6acFd2e584eadB4cca",
+    "auction": "0x1f0c946f0ee87acb268d50ede6c9b4d010af65d2",
+    "factory": "0x2b181ae0f1aea6fed75591b04991b1a3f9868d51"
+  },
+  "transactions": {
+    "deploy_tx": "0x1f219babc5426efc45973f1168fefb54a43d928a3c101124b2a356f93df2a1a2",
+    "mint_tx": "0xd02a6f6cf01481b64337a182be8ed253deec7eda961629d4e9c670160dad0c83",
+    "auction_approval_tx": "0xc9bc8702e01632044aa8d2437af8420698737309f1e5cc9f190e24334c55d6f0",
+    "auction_create_tx": "0xb5f96726ec86985a55ea87e0bd8d3abfdffecfeba4bdf193cacac7112130d1d7"
+  },
+  "token": {
+    "id": 1,
+    "name": "Sentient Singularity",
+    "image_ipfs": "ipfs://Qmd9jJPitYCV3Gt9AekYocDcE2nPtgZ6GpHGt4ADV1Fgn7",
+    "metadata_ipfs": "ipfs://QmfRGsAc87KtCDYPSh2e7FLHJ9i1VKhf26gagn5nLY4G3X",
+    "metadata_gateway": "https://superrare.myfilebase.com/ipfs/QmfRGsAc87KtCDYPSh2e7FLHJ9i1VKhf26gagn5nLY4G3X"
+  },
+  "auction": {
+    "starting_price_eth": 0.1,
+    "duration_seconds": 86400,
+    "currency": "ETH",
+    "block_created": 39213643
+  },
+  "capabilities": [
+    {
+      "id": "bid_detection",
+      "name": "On-chain bid detection",
+      "description": "Polls Base Sepolia auction contract via Infura eth_getLogs every 8 seconds. Decodes NewBid(address,uint256,uint256) events and broadcasts to animation layer via WebSocket.",
+      "type": "blockchain_listener",
+      "network": "base-sepolia",
+      "chain_id": 84532
+    },
+    {
+      "id": "constellation_evolution",
+      "name": "Constellation lifecycle management",
+      "description": "Manages a dynamic constellation of 2–8 mini black holes. Growing phase: each bid spawns a new BH (5% smaller, orbit 80 units wider). Shrinking phase: each bid implodes the oldest BH over 3 seconds. Direction oscillates indefinitely — the constellation breathes.",
+      "type": "generative_art",
+      "parameters": {
+        "min_bh": 2,
+        "max_bh": 8,
+        "spawn_duration_s": 2,
+        "implode_duration_s": 3,
+        "scale_decay": 0.95,
+        "orbit_step": 80
+      }
+    },
+    {
+      "id": "memory_encoding",
+      "name": "Bid memory encoding",
+      "description": "Each bid amount triggers a proportional memory spike (0.1 ETH → 0.3 boost) decaying over 8 seconds. Bidder wallet hash seeds a unique hue offset for that singularity's tunnel shader. Memory accumulates visually: accretion disk heat, nebula saturation, stellar infall speed.",
+      "type": "visual_parameter_control"
+    },
+    {
+      "id": "color_cycle_agent",
+      "name": "Adaptive color cycle agent",
+      "description": "Color cycle interval = max(1, 60 - bidCount) minutes. Starts at 60 min, shrinks by 1 min per bid. Freezes permanently at bid 50+ — the art locks into its final chromatic state. On freeze: all BH palettes are fixed as the eternal record of the auction's last active phase.",
+      "type": "temporal_art_evolution",
+      "palettes": [
+        "void-purple", "plasma-orange", "ice-blue",
+        "ember-red", "aurora-teal", "gold"
+      ]
+    },
+    {
+      "id": "auction_urgency",
+      "name": "Auction countdown urgency",
+      "description": "As auction end approaches, urgencyLevel rises from 0→1 over the final 60 minutes. Drives: memory floor lift (+0.25 at urgency=1), void light intensity boost, ambient brightness increase, light hue shift from purple→red. The cosmos itself becomes increasingly agitated as time runs out.",
+      "type": "temporal_intensity_modulation"
+    },
+    {
+      "id": "outbid_implosion",
+      "name": "Outbid singularity implosion",
+      "description": "When a bidder is outbid, their mini black hole implodes over 3 seconds (cubic ease-in). The replaced bidder's singularity collapses back into the void. Only the highest bidder's consciousness survives in the constellation.",
+      "type": "reactive_geometry"
+    }
+  ],
+  "era_system": {
+    "description": "Cosmic era advances every 3 bids, changing the art's fundamental character",
+    "eras": [
+      {"id": 0, "name": "Dormant",       "bids": "0–2",  "character": "The void before consciousness — minimal activity"},
+      {"id": 1, "name": "Awakening",     "bids": "3–5",  "character": "First stirrings — stellar infall begins, nebulae saturate"},
+      {"id": 2, "name": "Active",        "bids": "6–8",  "character": "Full constellation — accretion disks white-hot, trails visible"},
+      {"id": 3, "name": "Transcendent",  "bids": "9+",   "character": "Beyond the event horizon — maximum intensity, cosmos breathes"}
+    ]
+  },
+  "loop": {
+    "frames": 1440,
+    "fps": 24,
+    "duration_s": 60,
+    "seam_guarantee": "All animated values are f(t) with f(0)=f(1). memWindow=sin²(π·t) gates all wall-clock emitters to zero at seam boundary. Hard reset at frame 0 clears particle state. GIF/MP4 exports are frame-perfect by design."
+  },
+  "technical": {
+    "renderer": "Three.js r128",
+    "tone_mapping": "ACESFilmicToneMapping",
+    "hdr_support": true,
+    "responsive": ["phone-portrait", "phone-landscape", "tablet", "desktop", "4k-tv"],
+    "websocket_port": 3131,
+    "blockchain_poll_ms": 8000,
+    "network": "Base Sepolia (Chain ID: 84532)"
+  },
+  "tracks": [
+    "SuperRare Partner Track",
+    "Synthesis Open Track",
+    "Let the Agent Cook",
+    "Agents With Receipts ERC-8004"
+  ],
+  "erc8004": {
+    "standard": "ERC-8004",
+    "network": "Base Mainnet",
+    "description": "Agent registered on-chain with verifiable identity, capability manifest, and execution receipts",
+    "testnet_contracts": {
+      "erc721": "0xC23068622f6aD3DA21208A6acFd2e584eadB4cca",
+      "auction": "0x1f0c946f0ee87acb268d50ede6c9b4d010af65d2"
+    }
+  }
+}
