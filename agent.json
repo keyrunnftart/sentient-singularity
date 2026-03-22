@@ -1,7 +1,7 @@
 {
   "name": "Sentient Singularity Agent",
   "version": "1.0.0",
-  "description": "Autonomous agent that evolves a living black hole constellation in response to SuperRare auction activity on Base Sepolia. Each bid spawns or implodes mini black holes, modulates visual memory, and drives the cosmos through four eras of consciousness. The auction is not just an input — it is the artwork's nervous system.",
+  "description": "Autonomous agent that evolves a living black hole constellation in response to SuperRare auction activity on Base Sepolia. Each bid spawns or implodes mini black holes, modulates visual memory, and drives the cosmos through four eras of consciousness. The auction is not just an input \u2014 it is the artwork's nervous system.",
   "operator_wallet": "0xD0490ADeAa23cd45846372Aa09317a57A8880200",
   "erc8004_identity": {
     "participant_id": "88ad5e14c73546a08cfd8db43d94f02c",
@@ -45,15 +45,15 @@
     "plan": "On new bid: compute wallet hue, determine spawn vs implode based on constellation direction, calculate memory boost from ETH amount",
     "execute": "Spawn or implode mini BH with smooth animation, spike visual memory, update cosmic era, adjust color cycle interval",
     "verify": "Outbid detection fires implosion of replaced bidder singularity. Direction flips at MAX=8 and MIN=2.",
-    "evolve": "Color cycle interval = max(1, 60-bidCount) minutes. Freezes permanently at bid 50 — final chromatic state locked."
+    "evolve": "Color cycle interval = max(1, 60-bidCount) minutes. Freezes permanently at bid 50 \u2014 final chromatic state locked."
   },
   "safety_guardrails": [
-    "MIN_MINI=2 ensures 2 original BHs always present — never a blank canvas",
-    "MAX_MINI=8 caps visual complexity — no frame rate degradation",
-    "Cubic ease-in/out on all spawn/implode — zero visual discontinuity",
+    "MIN_MINI=2 ensures 2 original BHs always present \u2014 never a blank canvas",
+    "MAX_MINI=8 caps visual complexity \u2014 no frame rate degradation",
+    "Cubic ease-in/out on all spawn/implode \u2014 zero visual discontinuity",
     "memWindow=sin2(pi*t) gates all wall-clock emitters at seam boundary",
-    "bidMemoryBoost windowed at seam — loop is frame-perfect for GIF/MP4 export",
-    "Auto-reconnect on WebSocket disconnect — agent stays live through network drops"
+    "bidMemoryBoost windowed at seam \u2014 loop is frame-perfect for GIF/MP4 export",
+    "Auto-reconnect on WebSocket disconnect \u2014 agent stays live through network drops"
   ],
   "onchain_artifacts": {
     "erc721_contract": "0xC23068622f6aD3Da21208A6acFd2e584eadB4cca",
@@ -69,5 +69,11 @@
     "image_ipfs": "ipfs://Qmd9jJPitYCV3Gt9AekYocDcE2nPtgZ6GpHGt4ADV1Fgn7"
   },
   "repository": "https://github.com/keyrunnftart/sentient-singularity",
-  "video_demo": "https://youtu.be/JkchhnG4prc"
+  "video_demo": "https://youtu.be/JkchhnG4prc",
+  "tracks": [
+    "SuperRare Partner Track",
+    "Synthesis Open Track",
+    "Let the Agent Cook",
+    "Agents With Receipts ERC-8004"
+  ]
 }
