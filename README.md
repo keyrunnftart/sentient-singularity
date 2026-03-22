@@ -100,12 +100,18 @@ $env:MOCK="1"; node server.js
 
 ---
 
+## Submission
+
+**The Synthesis Hackathon 2026** — [View Project](https://synthesis.devfolio.co/sentient-singularity-b284) | [Demo Video](https://youtu.be/JkchhnG4prc) | [Moltbook](https://www.moltbook.com/post/1519b459-efe2-4967-b866-bdfd991c88a6)
+
 ## Tracks
 
 - **SuperRare Partner Track** — autonomous agent artwork on Rare Protocol. Bid activity = composition.
 - **Synthesis Open Track** — best overall synthesis of agent behaviour + Ethereum infrastructure
 - **Let the Agent Cook** — fully autonomous: listens, decides, acts, logs. Zero human intervention.
 - **Agents With Receipts ERC-8004** — agent registered on-chain with verifiable identity and execution receipts
+- **ENS Open Integration** — ENS-ready bidder identity; wallet addresses resolvable via ENS throughout the auction
+- **Lit Protocol** — sealed bid memory and per-bidder wallet hue as dark knowledge primitives
 
 ---
 
