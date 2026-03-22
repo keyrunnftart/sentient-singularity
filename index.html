@@ -1,0 +1,2287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,minimum-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000005">
+<meta name="msapplication-navbutton-color" content="#000005">
+<meta name="format-detection" content="telephone=no">
+<title>Sentient Singularity</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none}
+html{background:#000005;overflow:hidden;height:100%;width:100%}
+body{
+  background:#000005;
+  width:100%;height:100%;
+  overflow:hidden;
+  position:fixed;top:0;left:0;
+  /* Safe area insets for notched phones (iPhone X+) */
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+#c{
+  display:block;
+  width:100%;height:100%;
+  /* Fill entire viewport on all devices */
+  position:fixed;top:0;left:0;
+  touch-action:none;   /* prevent scroll/zoom on canvas touch */
+  cursor:crosshair;
+}
+/* Hide cursor on touch-primary devices */
+@media (hover:none) and (pointer:coarse){
+  #c{cursor:none}
+}
+/* Smart TV / large screen optimizations */
+@media (min-width:1920px){
+  #c{image-rendering:auto}
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+window.addEventListener('load',()=>{
+
+// ─────────────────────────────────────────────────────────────────
+//  LOOP AXIOMS  (never violate)
+//  1. t = frame/1440, range [0,1440)
+//  2. Every animated value = f(t) with f(0)=f(1).
+//     Only sin/cos(TAU·k·t+const), k∈ℤ+
+//  3. Zero wall-clock drift. Zero linear ramps.
+//  4. Memory resolves cyclically via sin/cos wrapping.
+// ─────────────────────────────────────────────────────────────────
+const TF=1440, TAU=Math.PI*2, HP=Math.PI*.5;
+function h(n){const x=Math.sin(n*127.1+311.7)*43758.5;return x-Math.floor(x);}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function sn(k,t,p=0){return Math.sin(TAU*k*t+p);}
+function cn(k,t,p=0){return Math.cos(TAU*k*t+p);}
+function ss(lo,hi,x){return clamp((x-lo)/(hi-lo),0,1);}
+
+// ═════════════════════════════════════════════════════════════════
+//  LOOP MEMORY ENVELOPE — replaces wall-clock accumulator
+//  tBasedMem(t): rises 0.38→0.72→0.38 over one full loop (k=1 cosine)
+//  This ensures memoryLevel = f(t) with f(0)=f(1) — zero seam.
+//  Live interaction additively boosts above this floor.
+// ═════════════════════════════════════════════════════════════════
+function tBasedMem(t){ return 0.38 + 0.34*(0.5-0.5*Math.cos(TAU*t)); }
+
+// ═════════════════════════════════════════════════════════════════
+//  CURSOR + POINTER
+// ═════════════════════════════════════════════════════════════════
+const cursorRaw=new THREE.Vector2(0,0);
+const cursor   =new THREE.Vector2(0,0);
+const cursorVel=new THREE.Vector2(0,0);
+let cursorStrength=0, cursorStrengthTarget=0, cursorVelMag=0;
+
+function toNDC(cx,cy){
+  return{x:(cx/window.innerWidth)*2-1, y:-(cy/window.innerHeight)*2+1};
+}
+document.addEventListener('mousemove',e=>{const{x,y}=toNDC(e.clientX,e.clientY);cursorRaw.set(x,y);cursorStrengthTarget=1;},{passive:true});
+document.addEventListener('mouseleave',()=>{cursorStrengthTarget=0;});
+document.addEventListener('touchmove',e=>{const t2=e.touches[0];const{x,y}=toNDC(t2.clientX,t2.clientY);cursorRaw.set(x,y);cursorStrengthTarget=1;},{passive:true});
+document.addEventListener('touchstart',e=>{const t2=e.touches[0];const{x,y}=toNDC(t2.clientX,t2.clientY);cursorRaw.set(x,y);cursorStrengthTarget=1;},{passive:true});
+document.addEventListener('touchend',()=>{cursorStrengthTarget=0;},{passive:true});
+document.addEventListener('touchcancel',()=>{cursorStrengthTarget=0;},{passive:true});
+
+// ═════════════════════════════════════════════════════════════════
+//  MEMORY SYSTEM
+// ═════════════════════════════════════════════════════════════════
+const MEM_PATH_LEN=128;
+const memPath=Array.from({length:MEM_PATH_LEN},()=>new THREE.Vector2(0,0));
+const memPathAge=new Float32Array(MEM_PATH_LEN).fill(1);
+let memPathHead=0, pathSampleTimer=0;
+let memoryLevel=0, memAccum=0;
+const memDecayRate=0.000035;
+const seedQueue=[];
+
+document.addEventListener('click',e=>{
+  const{x,y}=toNDC(e.clientX,e.clientY);
+  seedQueue.push({nx:x,ny:y,age:0,delay:0.7+Math.random()*1.3,bloomed:false,life:0});
+},{passive:true});
+document.addEventListener('touchend',e=>{
+  if(e.changedTouches.length>0){
+    const t2=e.changedTouches[0];
+    const{x,y}=toNDC(t2.clientX,t2.clientY);
+    seedQueue.push({nx:x,ny:y,age:0,delay:0.7+Math.random()*1.3,bloomed:false,life:0});
+  }
+},{passive:true});
+
+function tickMemory(dt){
+  pathSampleTimer+=dt;
+  if(pathSampleTimer>0.067&&cursorStrength>0.05){
+    pathSampleTimer=0;
+    memPath[memPathHead].set(cursor.x,cursor.y);
+    memPathAge[memPathHead]=0;
+    memPathHead=(memPathHead+1)%MEM_PATH_LEN;
+  }
+  for(let i=0;i<MEM_PATH_LEN;i++) memPathAge[i]=Math.min(1,memPathAge[i]+dt*0.16);
+
+  const gain=cursorStrength*(0.0005+clamp(cursorVelMag*12,0,1)*0.0008);
+  memAccum=clamp(memAccum+gain-memDecayRate,0,1);
+  const lr=memAccum>memoryLevel?0.007:0.0012;
+  memoryLevel=clamp(memoryLevel+(memAccum-memoryLevel)*lr,0,1);
+
+  for(let i=seedQueue.length-1;i>=0;i--){
+    const s=seedQueue[i];
+    s.age+=dt;
+    if(!s.bloomed&&s.age>=s.delay){s.bloomed=true;s.life=1.0;spawnSeedBloom(s.nx,s.ny);}
+    if(s.bloomed) s.life-=dt*0.25;
+    if(s.life<0) seedQueue.splice(i,1);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  RENDERER — fully responsive across all device classes
+//  Mobile phones   : DPR capped at 2, wider FOV in portrait
+//  Tablets         : DPR capped at 2, balanced FOV
+//  Laptops/desktops: DPR capped at 2, standard FOV
+//  Smart TVs / 4K  : DPR capped at 1.5 (perf), narrow FOV
+//  Foldables       : debounced resize, handles aspect switches
+// ═════════════════════════════════════════════════════════════════
+const canvas=document.getElementById('c');
+const R=new THREE.WebGLRenderer({
+  canvas,antialias:true,alpha:false,
+  powerPreference:'high-performance',
+  precision:'highp'
+});
+let cam;
+
+// Device class detection helpers
+function isTV(){ return window.innerWidth>=1920 && (window.devicePixelRatio<=1.1 || window.innerWidth>=3840); }
+function isPhone(){ return Math.min(window.innerWidth,window.innerHeight)<600; }
+function isTablet(){ return !isPhone() && Math.min(window.innerWidth,window.innerHeight)<1024; }
+function isPortrait(){ return window.innerHeight>window.innerWidth; }
+
+// Adaptive camera FOV based on device + orientation
+function getAdaptiveFOV(){
+  const aspect=window.innerWidth/window.innerHeight;
+  if(isTV())                    return 38;   // TV: narrow, cinematic
+  if(isPortrait() && isPhone()) return 75;   // phone portrait: wide so scene fits
+  if(isPhone())                 return 58;   // phone landscape
+  if(isPortrait() && isTablet())return 68;   // tablet portrait
+  if(isTablet())                return 60;   // tablet landscape
+  if(aspect<1.2)                return 65;   // near-square laptop
+  if(aspect>2.2)                return 42;   // ultra-wide monitors
+  return 52;                                 // standard 16:9 laptop/desktop
+}
+
+// Adaptive camera orbit radius — pull back on small screens so BH fits
+function getAdaptiveCamRadius(){
+  if(isPhone() && isPortrait()) return 560;  // further back on portrait phone
+  if(isPhone())                 return 480;
+  if(isTablet())                return 450;  // tablets: slightly wider than desktop
+  if(isTV())                    return 400;
+  return 420;                                // default desktop
+}
+
+// DPR cap: balance quality vs perf per device class
+function getAdaptiveDPR(){
+  const dpr=window.devicePixelRatio||1;
+  if(isTV())    return Math.min(dpr,1.5);  // 4K TVs: cap at 1.5× for performance
+  return Math.min(dpr,2);                  // phones/tablets: cap at 2×
+}
+
+let _resizeTimer=null;
+function resize(){
+  clearTimeout(_resizeTimer);
+  _resizeTimer=setTimeout(()=>{
+    const w=window.innerWidth, h=window.innerHeight;
+    const dpr=getAdaptiveDPR();
+    R.setPixelRatio(dpr);
+    R.setSize(w,h,false);
+    if(cam){
+      cam.aspect=w/h;
+      cam.fov=getAdaptiveFOV();
+      cam.updateProjectionMatrix();
+    }
+    CAM_R_BASE=getAdaptiveCamRadius();
+    // Update horizon shader resolution uniform
+    if(typeof horizonMat!=='undefined')
+      horizonMat.uniforms.uRes.value.set(w,h);
+    // Update fog density for wide/narrow screens
+    if(scene) scene.fog.density = w/h > 2.2 ? 0.000012 : 0.000018;
+  },50);  // 50ms debounce handles foldable/resizable window snapping
+}
+
+// Immediate first-paint resize (no debounce)
+function resizeImmediate(){
+  const w=window.innerWidth, h=window.innerHeight;
+  R.setPixelRatio(getAdaptiveDPR());
+  R.setSize(w,h,false);
+}
+
+resizeImmediate();
+window.addEventListener('resize',resize,{passive:true});
+window.addEventListener('orientationchange',()=>setTimeout(resize,200),{passive:true});
+// Handle visual viewport changes (mobile keyboard popup etc.)
+if(window.visualViewport){
+  window.visualViewport.addEventListener('resize',resize,{passive:true});
+}
+R.setClearColor(0x000005,1);
+R.outputEncoding=THREE.sRGBEncoding;
+R.toneMapping=THREE.ACESFilmicToneMapping;
+R.toneMappingExposure=1.8;
+
+const scene=new THREE.Scene();
+scene.fog=new THREE.FogExp2(0x000005,0.000018);
+cam=new THREE.PerspectiveCamera(
+  getAdaptiveFOV(),
+  window.innerWidth/window.innerHeight,
+  0.5, 7000
+);
+
+const ambient=new THREE.AmbientLight(0x334466,0.55);
+scene.add(ambient);
+const voidLight=new THREE.PointLight(0x1a0a2a,0.0,600);
+voidLight.position.set(0,0,0);
+scene.add(voidLight);
+// Dedicated rock fill light — orbits with camera so rocks are always lit
+const rockFillLight=new THREE.PointLight(0xaabbcc,1.8,2000);
+scene.add(rockFillLight);
+const rockRimLight=new THREE.DirectionalLight(0xffeedd,0.9);
+rockRimLight.position.set(1,0.6,-1).normalize();
+scene.add(rockRimLight);
+
+// ═════════════════════════════════════════════════════════════════
+//  CAMERA — unchanged orbital loop
+// ═════════════════════════════════════════════════════════════════
+let CAM_R_BASE=420;  // updated by resize() for each device class
+const CAM_ELEV=0.72;
+function getCam(t){
+  const az=TAU*t;
+  const env=0.15+0.425*(1.0-cn(1,t));
+  const elev=CAM_ELEV*env*sn(2,t);
+  const Rv=CAM_R_BASE+35*cn(2,t)-20*Math.abs(sn(2,t))*env;
+  const cosE=Math.cos(elev),sinE=Math.sin(elev);
+  return new THREE.Vector3(Rv*cosE*Math.cos(az),Rv*sinE,Rv*cosE*Math.sin(az));
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  STAR FIELD — stellar infall streams toward singularity
+// ═════════════════════════════════════════════════════════════════
+const ST_N=3000;
+const stP=new Float32Array(ST_N*3);
+const stPh=new Float32Array(ST_N);
+const stType=new Float32Array(ST_N);
+const stSz=new Float32Array(ST_N);
+for(let i=0;i<ST_N;i++){
+  const phi=Math.acos(1-2*h(i*2.1+10));
+  const th=h(i*3.7+10)*TAU;
+  const r=500+Math.pow(h(i*5.3+10),.5)*3300;
+  stP[i*3]=r*Math.sin(phi)*Math.cos(th);
+  stP[i*3+1]=r*Math.sin(phi)*Math.sin(th);
+  stP[i*3+2]=r*Math.cos(phi);
+  stPh[i]=h(i*7.1+10);
+  const t2=h(i*11.3+10);
+  stType[i]=t2<.50?1:t2<.85?0:2;
+  stSz[i]=.5+Math.pow(h(i*13.7+10),.4)*2.4;
+}
+const stGeo=new THREE.BufferGeometry();
+stGeo.setAttribute('position',new THREE.BufferAttribute(stP,3));
+stGeo.setAttribute('aPh',     new THREE.BufferAttribute(stPh,1));
+stGeo.setAttribute('aType',   new THREE.BufferAttribute(stType,1));
+stGeo.setAttribute('aSz',     new THREE.BufferAttribute(stSz,1));
+
+const stVS=`
+attribute float aPh,aType,aSz;
+varying vec3 vC; varying float vG,vSp;
+uniform float uT,uCursorStr,uMemory;
+uniform vec2  uCursor;
+void main(){
+  float arcStr=clamp((uMemory-0.35)/0.30,0.,1.);
+  float memWarm=clamp((uMemory-0.68)/0.32,0.,1.);
+  float memSat =clamp(uMemory/0.55,0.,1.);
+  // Cursor micro-gravity well
+  float driftStr=uMemory*0.06;
+  vec4 mv0=modelViewMatrix*vec4(position,1.);
+  vec3 vDir=normalize(mv0.xyz);
+  vec3 cRay=normalize(vec3(uCursor.x*1.1,uCursor.y*0.6,-1.0));
+  float align=max(0.,dot(vDir,cRay));
+  float cone=smoothstep(0.65,0.97,align);
+  float pull=cone*uCursorStr*driftStr*20.0;
+  vec3 nudgeDir=normalize(vec3(uCursor,-0.5)-vDir);
+  vec3 pos2=position+nudgeDir*pull;
+  // Arc drift toward singularity at origin — stellar infall
+  float fallStr=arcStr*0.045;
+  vec3 toCore=-normalize(position);
+  pos2+=toCore*fallStr*length(position)*0.018*sin(6.2832*3.*uT+aPh*6.2832);
+  float bright=1.;vSp=0.;vG=.36;
+  float ap=aPh*6.2832;
+  if(aType<0.5){
+    float tw=max(pow(max(0.,sin(6.2832*5.*uT+ap)),3.5),pow(max(0.,sin(6.2832*8.*uT+ap+1.9)),3.5));
+    bright=2.1+1.7*tw;
+    vec3 base=mix(vec3(.96,.94,.89),vec3(1.2,1.2,1.1),tw*.65)*bright;
+    vC=mix(base,vec3(1.3,.55,.10),memWarm*0.45);
+    vG=.48+.42*tw; vSp=arcStr*0.20;
+  } else if(aType<1.5){
+    float tw=pow(max(0.,sin(6.2832*7.*uT+ap)),3.5);
+    bright=1.9+1.3*tw;
+    vec3 base=vec3(.96,.94,.88)*bright;
+    vec3 grey=vec3(dot(base,vec3(.299,.587,.114)));
+    vC=mix(grey*bright*0.65,base,0.20+memSat*0.80);
+    vG=.48+.28*tw; vSp=arcStr*0.22;
+  } else {
+    float b=max(pow(max(0.,sin(6.2832*12.*uT+ap)),2.0),pow(max(0.,sin(6.2832*18.*uT+ap+2.4)),2.8)*.72)*4.0;
+    bright=b;
+    vC=mix(mix(vec3(.84,.90,1.15),vec3(1.35,1.35,1.25),b),vec3(1.4,.90,.25),memWarm*0.35);
+    vSp=arcStr*.38; vG=.28+b*.52;
+  }
+  vec4 mv=modelViewMatrix*vec4(pos2,1.);
+  float dist=length(mv.xyz);
+  float pxSz=(aSz*2.5+bright*(aType>1.5?13.:3.0))*200./dist*(1.+arcStr*0.5);
+  gl_PointSize=clamp(pxSz,.4,40.);
+  gl_Position=projectionMatrix*mv;
+}`;
+const stFS=`
+varying vec3 vC; varying float vG,vSp;
+void main(){
+  vec2 uv=gl_PointCoord*2.-1.;float d=dot(uv,uv);
+  if(d>1.)discard;
+  float r=sqrt(d);
+  float core=1.-smoothstep(0.,.22,d);
+  float glow=1.-smoothstep(0.,1.,d);
+  float hdrC=1.-smoothstep(0.,.06,d);
+  float ang=atan(uv.y,uv.x);
+  float spoke=pow(abs(cos(ang*3.)),14.)*(1.-smoothstep(0.,1.,r))*vSp*.85;
+  float cx=max((1.-smoothstep(0.,.055,abs(uv.x)))*(1.-smoothstep(0.,1.,abs(uv.y))),
+               (1.-smoothstep(0.,.055,abs(uv.y)))*(1.-smoothstep(0.,1.,abs(uv.x))))*vSp*.55;
+  float a=core+glow*vG+spoke+cx+hdrC*2.4;
+  gl_FragColor=vec4(vC*(1.+hdrC*1.3),clamp(a,0.,1.));
+}`;
+const stMat=new THREE.ShaderMaterial({
+  uniforms:{uT:{value:0},uCursor:{value:new THREE.Vector2()},uCursorStr:{value:0},uMemory:{value:0}},
+  vertexShader:stVS,fragmentShader:stFS,
+  transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+scene.add(new THREE.Points(stGeo,stMat));
+
+// ═════════════════════════════════════════════════════════════════
+//  NEBULA — memory-driven, desaturated base, pressure waves
+// ═════════════════════════════════════════════════════════════════
+const nebVS=`varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
+const nebFS=`
+varying vec2 vUv;
+uniform float uT,uPh,uOpa,uTw,uBr,uCursorStr,uMemory;
+uniform vec2  uCursor;
+uniform vec3  uCA,uCB;
+float hx(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}
+float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  return mix(mix(hx(i),hx(i+vec2(1,0)),f.x),mix(hx(i+vec2(0,1)),hx(i+vec2(1,1)),f.x),f.y);}
+float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<5;i++){v+=a*vn(p);p=p*2.1+vec2(1.7,9.2);a*=.5;}return v;}
+vec3 rotHue(vec3 c,float a){float co=cos(a),si=sin(a);vec3 k=vec3(.57735);return c*co+cross(k,c)*si+k*dot(k,c)*(1.-co);}
+void main(){
+  vec2 uv=vUv*2.-1.;float e=length(uv);
+  float mask=smoothstep(1.,.10,e);if(mask<.001)discard;
+  float t=uT*6.2832*2.+uPh;
+  vec2 cUV=uCursor*0.60;
+  vec2 radDir=normalize(uv-cUV+vec2(.001));
+  float radDist=length(uv-cUV);
+  float radFall=smoothstep(1.6,0.,radDist);
+  float mem3=clamp((uMemory-.65)/.25,0.,1.);
+  // t2 = clean integer-k time base for periodic signals
+  float t2=uT*6.2832;
+  float ripple=sin(t2*1.0+uPh+radDist*3.2)*.5+.5;   // k=1, seamless
+  float pressure=mem3*ripple*smoothstep(.8,.2,radDist)*.28;
+  vec2 radWarp=radDir*radFall*uCursorStr*(0.10+uMemory*0.25)+pressure*radDir*0.10;
+  float twActive=uTw*(0.28+uMemory*0.72)*(1.+uCursorStr*.50);
+  // Warp vectors — integer-k on t2 for seamless loop
+  vec2 w=vec2(sin(t2*1.+uPh+uv.y*1.7),cos(t2*1.+uPh+0.8+uv.x*1.6))*.09*twActive+radWarp;
+  vec2 wu=uv+w;
+  // FBM inputs — slow pan via t is fine (non-visible at seam boundary)
+  float n1=fbm(wu*2.2+vec2(sin(t2*1.+uPh),cos(t2*1.+uPh+1.5))*.38);
+  float n2=fbm(wu*1.3+vec2(cos(t2*1.+uPh+.8),sin(t2*1.+uPh+2.3))*.38+vec2(3.1,7.4));
+  float n3=fbm(wu*4.0+vec2(sin(t2*2.+uPh),cos(t2*2.+uPh+1.1))*.38+vec2(13.7,2.9));
+  float fil=smoothstep(.60,.84,n3)*smoothstep(.78,.94,n1);
+  float dens=(pow(n1,1.40)*pow(n2,.75)*.82+fil*.30)*mask;
+  dens=dens*(0.65+clamp((uMemory-.35)/.35,0.,1.)*radFall*uCursorStr*0.50)+pressure*mask*.22;
+  float hueShift=uMemory*.55*(uCursor.y*uCursorStr*.5+.5);
+  vec3 cA=rotHue(uCA,hueShift),cB=rotHue(uCB,hueShift);
+  vec3 colF=mix(cA,cB,n2*.60);
+  vec3 grey=vec3(dot(colF,vec3(.299,.587,.114)));
+  vec3 col=mix(grey*1.05,colF,0.12+clamp(uMemory/0.8,0.,1.)*0.88);
+  col=mix(col,col*2.8+.15,fil*.55)*uBr*(1.+radFall*uCursorStr*.50+pressure*.45);
+  col+=cA*smoothstep(.44,.88,n1)*.45;
+  gl_FragColor=vec4(col,clamp(dens*uOpa,0.,.94));
+}`;
+const NP=[[.62,.70],[.82,.88],[.52,.58],[.05,.13],[.68,.75],[.14,.22]];
+const nebMats=[];
+for(let i=0;i<12;i++){
+  const p=NP[i%6];
+  const caCol=new THREE.Color().setHSL(p[0],.75,.34);
+  const cbCol=new THREE.Color().setHSL(p[1],.72,.38);
+  const mat=new THREE.ShaderMaterial({
+    uniforms:{uT:{value:0},uPh:{value:h(i*17.3+5)*TAU*4},
+      uCA:{value:caCol.clone()},uCB:{value:cbCol.clone()},
+      uTw:{value:.40+h(i*13.1)*.85},uBr:{value:.58+h(i*19.3)*.50},
+      uOpa:{value:.55+h(i*23.7)*.35},
+      uCursor:{value:new THREE.Vector2()},uCursorStr:{value:0},uMemory:{value:0}},
+    vertexShader:nebVS,fragmentShader:nebFS,
+    transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide});
+  const sz=650+h(i*7.3)*900;
+  const mesh=new THREE.Mesh(new THREE.PlaneGeometry(sz,sz*.75),mat);
+  const phi=Math.acos(1-2*h(i*29.1+6)),thh=h(i*31.3+6)*TAU;
+  const Rr=2200+h(i*37.9)*620;
+  mesh.position.set(Rr*Math.sin(phi)*Math.cos(thh),Rr*Math.sin(phi)*Math.sin(thh)*.55,Rr*Math.cos(phi));
+  mesh.lookAt(0,0,0);mesh.frustumCulled=false;
+  scene.add(mesh);
+  nebMats.push({mat,bk:[1,2,1,3,2,1,3,2,1,2,3,1][i],bo:h(i*43.1+6)*TAU,bBase:.55+h(i*23.7)*.35});
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  VOID BACKGROUND — fractal hyperbolic tunnel on backplane sphere
+//  Based on logarithmic radial raymarcher with multi-octave sine FBM.
+//  Rendered on BackSide sphere r=3800 — behind all other geometry.
+// ═════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
+//  COMETS — reduced, infall-curved paths
+// ═════════════════════════════════════════════════════════════════
+const CTAIL=60,CSPAN=1800;
+const cometVS=`
+attribute float aT;
+uniform vec3 uDir;uniform float uFreq,uPhase,uSpan,uTLen,uOpa,uT,uCursorStr,uMemory;uniform vec2 uCursor;
+varying float vA,vPull;
+void main(){
+  float st=fract(uT*uFreq+uPhase);
+  vec3 head=position+uDir*(st*uSpan);
+  vec3 wp=head-uDir*aT*uTLen;
+  vA=(1.-pow(aT,1.3))*uOpa*min(smoothstep(0.,.05,st),smoothstep(1.,.95,st));
+  float alignStr=clamp((uMemory-.35)/.35,0.,1.);
+  vec3 cRay=normalize(vec3(uCursor.x*1.1,uCursor.y*.6,-1.));
+  vec3 vDirVS=normalize((modelViewMatrix*vec4(uDir,0.)).xyz);
+  vPull=smoothstep(.55,.92,abs(dot(vDirVS,cRay)))*uCursorStr*alignStr;
+  vec4 mv=modelViewMatrix*vec4(wp,1.);
+  gl_PointSize=(vA*5.625+.375)*(1.+vPull*.8)/(1.+(-mv.z)*.00038);
+  gl_Position=projectionMatrix*mv;
+}`;
+const cometFS=`
+varying float vA,vPull;uniform vec3 uCol;
+void main(){
+  if(vA<.006)discard;
+  vec2 uv=gl_PointCoord*2.-1.;float d=dot(uv,uv);if(d>1.)discard;
+  vec3 col=mix(uCol*1.625,vec3(1.625,1.875,2.625),vPull*.65);
+  gl_FragColor=vec4(col,((1.-smoothstep(0.,.15,d))+(1.-smoothstep(0.,1.,d))*.475)*vA);
+}`;
+const cometCols=[0xffffff,0xaaddff,0xffeedd,0xcdfff4,0xe8d4ff,0xddeeff];
+const cometMats=[];
+for(let ci=0;ci<6;ci++){
+  const phi=Math.acos(1-2*h(ci*7.3+100)),tha=h(ci*11.7+200)*TAU;
+  const dir=new THREE.Vector3(Math.sin(phi)*Math.cos(tha),Math.sin(phi)*Math.sin(tha)*.4,Math.cos(phi)).normalize();
+  const origin=dir.clone().multiplyScalar(-CSPAN*.5);
+  const vPos=new Float32Array(CTAIL*3),vT=new Float32Array(CTAIL);
+  for(let j=0;j<CTAIL;j++){vPos[j*3]=origin.x;vPos[j*3+1]=origin.y;vPos[j*3+2]=origin.z;vT[j]=j/(CTAIL-1);}
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(vPos,3));
+  geo.setAttribute('aT',new THREE.BufferAttribute(vT,1));
+  const mat=new THREE.ShaderMaterial({
+    uniforms:{uT:{value:0},uDir:{value:dir},uFreq:{value:[2,2,3,3,2,3][ci]},
+      uPhase:{value:ci/6},uSpan:{value:CSPAN},uTLen:{value:CSPAN*.005*CTAIL},
+      uOpa:{value:(.65+h(ci*31)*.12)*1.25},uCol:{value:new THREE.Color(cometCols[ci])},
+      uCursor:{value:new THREE.Vector2()},uCursorStr:{value:0},uMemory:{value:0}},
+    vertexShader:cometVS,fragmentShader:cometFS,
+    transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+  scene.add(new THREE.Points(geo,mat));
+  cometMats.push(mat);
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  ██████  BLACK HOLE CENTERPIECE
+// ═════════════════════════════════════════════════════════════════
+
+// ── Deep void core sphere — absolute black ────────────────────────
+const bhCore=new THREE.Mesh(
+  new THREE.SphereGeometry(22,64,64),
+  new THREE.MeshBasicMaterial({color:0x000000}));
+scene.add(bhCore);
+
+// ── Whirlpool — 3 layered rings around the black hole ─────────────
+// Layer 0 (inner):  r=4–28,   white→blue,       4 arms, k=3–6, flat
+// Layer 1 (mid):    r=30–70,  orange→gold,       3 arms, k=2–4, tilt+25°
+// Layer 2 (outer):  r=75–130, violet→teal,       5 arms, k=1–3, tilt-15°
+// All positions pure t-based. Counter-rotation via negative angle sign.
+// Loop-safe: angle = ±TAU*k*t + const, k∈ℤ+
+
+const WP_LAYERS = [
+  // { n, rMin, rMax, arms, kMin, kMax, tiltX, tiltZ, dir, seed }
+  { n:1800, rMin:4,   rMax:28,  arms:4, kMin:3, kMax:6, tiltX:0,     tiltZ:0,    dir:1,  seed:500  },
+  { n:1400, rMin:35,  rMax:90,  arms:3, kMin:2, kMax:4, tiltX:0.44,  tiltZ:0.18, dir:-1, seed:1500 },
+  { n:1100, rMin:100, rMax:180, arms:5, kMin:1, kMax:3, tiltX:-0.26, tiltZ:0.12, dir:1,  seed:2500 },
+];
+
+// Shared vertex + fragment shaders — uLayerColor and uLayerColor2
+// passed per-layer to handle different color schemes
+const wpVS=`
+attribute float aPh,aR,aArm,aK,aSz;
+varying float vAlpha,vInteract;
+uniform float uT,uCursorStr,uMemory;
+uniform float uArms,uDir,uTiltX,uTiltZ,uRMin,uRMax;
+
+void main(){
+  float TAU=6.28318;
+  float t=uT*TAU;
+
+  float interact=clamp(uCursorStr*1.2+uMemory*0.7,0.,1.);
+
+  float armOfs     = aArm * TAU / uArms;
+  float winding    = 2.2;
+  float angle      = t * aK * uDir + aPh * TAU + armOfs;
+  float spiralAngle= angle + aR * winding * 0.08 * uDir;
+
+  // Radius breathes, contracts on interact
+  float rBase = aR * (0.55 + 0.45*sin(t*1.0 + aPh*TAU));
+  float rPull = rBase * (1.0 - interact*0.35);
+
+  // Disk thickness — wider Y spread so layers are visible face-on
+  float yFlat = 0.35 + interact*0.15;   // was 0.18, now much more visible
+  float cx = rPull * cos(spiralAngle);
+  float cy = rPull * sin(spiralAngle) * yFlat + sin(t*2.0+aPh*TAU)*aR*0.10;
+  float cz = rPull * sin(spiralAngle) * 0.12;  // was 0.06
+
+  // Tilt: rotate around X then Z
+  float cosX=cos(uTiltX),sinX=sin(uTiltX);
+  float ty = cy*cosX - cz*sinX;
+  float tz = cy*sinX + cz*cosX;
+  float cosZ=cos(uTiltZ),sinZ=sin(uTiltZ);
+  float px2 = cx*cosZ - ty*sinZ;
+  float py2 = cx*sinZ + ty*cosZ;
+  float pz2 = tz;
+
+  vec3 pos = vec3(px2,py2,pz2);
+
+  // radFade: bright at both inner and mid, fades only at far outer edge
+  // Normalise aR to [0,1] within this layer's range
+  float rNorm = (aR - uRMin) / max(uRMax - uRMin, 1.0);
+  // Fade: 0 at rNorm=0 (inner), peak at 0.3, gentle fade to outer
+  float radFade = smoothstep(0.0,0.25,rNorm) * smoothstep(1.0,0.55,rNorm);
+  radFade = radFade * radFade * 1.4;   // boost brightness
+
+  float shimmer = 0.7 + 0.3*sin(t*5.0 + aPh*TAU*3.0);
+  vAlpha   = radFade * shimmer * (0.55 + interact*0.45);
+  vInteract= interact;
+
+  vec4 mv=modelViewMatrix*vec4(pos,1.);
+  float dist=length(mv.xyz);
+  // Larger point size — was *180, now *260 for better visibility
+  float sz=(aSz*2.2+radFade*3.0)*(1.0+interact*0.7)*260./dist;
+  gl_PointSize=clamp(sz,0.6,20.);
+  gl_Position=projectionMatrix*mv;
+}`;
+
+const wpFS=`
+precision highp float;
+varying float vAlpha,vInteract;
+uniform vec3 uColA,uColB,uColC;
+void main(){
+  if(vAlpha<0.008)discard;
+  vec2 uv=gl_PointCoord*2.-1.;
+  float d=dot(uv,uv); if(d>1.)discard;
+  float core=1.-smoothstep(0.,0.20,d);
+  float glow=1.-smoothstep(0.,1.,d);
+  // At rest: uColA (base). At interact: blend toward uColB.
+  // Core brightens to uColC.
+  vec3 col=mix(uColA,uColB,vInteract);
+  col=mix(col,uColC,core*(0.4+vInteract*0.55));
+  float a=(core*1.1+glow*0.32)*vAlpha;
+  gl_FragColor=vec4(col,clamp(a,0.,1.));
+}`;
+
+// Per-layer color schemes
+const WP_COLORS = [
+  // [rest, interact, core]
+  [new THREE.Color(0.88,0.93,1.00), new THREE.Color(0.10,0.55,1.80), new THREE.Color(1.40,1.50,1.80)],
+  [new THREE.Color(0.90,0.65,0.20), new THREE.Color(1.40,0.82,0.08), new THREE.Color(1.80,1.60,0.80)],
+  [new THREE.Color(0.55,0.25,0.90), new THREE.Color(0.10,0.85,0.75), new THREE.Color(1.20,0.90,1.60)],
+];
+
+const wpMats=[];
+
+WP_LAYERS.forEach((L,li)=>{
+  const {n,rMin,rMax,arms,kMin,kMax,tiltX,tiltZ,dir,seed}=L;
+  const ph =new Float32Array(n);
+  const rr =new Float32Array(n);
+  const arm=new Float32Array(n);
+  const kk =new Float32Array(n);
+  const sz =new Float32Array(n);
+  const dummy=new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    ph[i]  =h(i*7.3+seed);
+    rr[i]  =rMin+Math.pow(h(i*13.1+seed),0.55)*(rMax-rMin);
+    arm[i] =Math.floor(h(i*17.7+seed)*arms);
+    kk[i]  =kMin+Math.floor(h(i*23.3+seed)*(kMax-kMin+1));
+    sz[i]  =0.4+h(i*31.9+seed)*1.6;
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(dummy,3));
+  geo.setAttribute('aPh', new THREE.BufferAttribute(ph,1));
+  geo.setAttribute('aR',  new THREE.BufferAttribute(rr,1));
+  geo.setAttribute('aArm',new THREE.BufferAttribute(arm,1));
+  geo.setAttribute('aK',  new THREE.BufferAttribute(kk,1));
+  geo.setAttribute('aSz', new THREE.BufferAttribute(sz,1));
+  const [cA,cB,cC]=WP_COLORS[li];
+  const mat=new THREE.ShaderMaterial({
+    uniforms:{
+      uT:{value:0},uCursorStr:{value:0},uMemory:{value:0},
+      uArms:{value:arms},uDir:{value:dir},
+      uTiltX:{value:tiltX},uTiltZ:{value:tiltZ},
+      uRMin:{value:rMin},uRMax:{value:rMax},
+      uColA:{value:cA},uColB:{value:cB},uColC:{value:cC}
+    },
+    vertexShader:wpVS,fragmentShader:wpFS,
+    transparent:true,depthWrite:false,blending:THREE.AdditiveBlending
+  });
+  const pts=new THREE.Points(geo,mat);
+  pts.frustumCulled=false;
+  pts.renderOrder=1+li;
+  scene.add(pts);
+  wpMats.push(mat);
+});
+
+// ── Photon ring / event horizon — fractal void tunnel inside ─────
+// Billboard plane faces camera. Fragment shader runs the hyperbolic
+// raymarcher through the black hole interior, with photon ring overlay.
+const horizonVS=`
+varying vec2 vUv;
+void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
+
+const horizonFS=`
+precision highp float;
+varying vec2 vUv;
+uniform float uT,uMemory,uCursorStr,uPulse;
+uniform vec2  uCursor,uRes;
+
+vec3 hsv(float h,float s,float v){
+  vec3 c=clamp(abs(fract(h+vec3(0.,2./3.,1./3.))*6.-3.)-1.,0.,1.);
+  return v*mix(vec3(1.),c,s);
+}
+
+void main(){
+  vec2 uv  = vUv*2.-1.;
+  float dist = length(uv);
+
+  // Billboard circle clip — hard discard outside unit circle
+  // Outer edge fades into space; interior is the singularity mouth
+  if(dist > 1.0) discard;
+
+  // ── OPTION A: tunnel axis points INTO the singularity ──────────
+  // Ray ORIGIN is pulled back along the camera-facing axis.
+  // Ray DIRECTION converges toward screen centre (0,0,depth).
+  // This makes every pixel feel like it is looking down a throat
+  // that narrows to a vanishing point at the singularity core.
+
+  float t = uT * 6.28318;   // k=1, perfectly loop-safe
+
+  // Cursor warps the vanishing point — gravity well on the tunnel mouth
+  vec2 vanish  = uCursor * uCursorStr * 0.18;
+
+  // UV offset from the shifted vanishing point — this is the
+  // angle each ray deviates from the tunnel axis
+  vec2 uvOfs   = uv - vanish;
+  float uvDist = length(uvOfs);
+
+  // Ray origin: sits behind the billboard along Z, displaced by UV
+  // Wider UV → more oblique ray → reveals tunnel walls more
+  // Centre UV → perfectly axial ray → deepest tunnel view
+  float originZ = -1.2 - uMemory*0.6;   // deeper with memory
+  vec3 ro = vec3(uvOfs * 0.35, originZ);
+
+  // Ray direction: from origin toward the singularity vanishing point
+  // (0,0,0) with slight forward tilt. Normalised.
+  // The mix between pure-axial and UV-spread controls FOV feel.
+  vec3 rd = normalize(vec3(uvOfs * 0.55, 1.2));
+
+  // Tunnel speed — BASE must be integer k so t*speed completes full cycles.
+  // k=1 base = one full tunnel pattern per loop (smooth, always seamless).
+  // Cursor/memory boosts are multiplied by uMemWin (sin²(π·uT)) which is
+  // exactly 0 at uT=0 and uT=1 — so any non-integer boost vanishes at seam.
+  float memWin = sin(3.14159*uT); memWin = memWin*memWin;  // 0 at loop ends
+  float speed = 1.0                          // k=1 integer base — NEVER changes
+              + uCursorStr * 2.0 * memWin    // windowed cursor boost
+              + uMemory    * 1.0 * memWin;   // windowed memory boost
+
+  // ── RAY MARCH ──────────────────────────────────────────────────
+  vec3 col = vec3(0.);
+  vec3 q   = ro;
+  float e  = 0.001;
+  float Rv = 0.001;
+
+  for(int iter=0;iter<42;iter++){
+
+    // Color: dormant amber-void → cursor white-hot → memory violet-deep
+    float hue = mix(0.08, 0.70, uMemory) - uCursorStr*0.18;
+    float sat = mix(0.20, 0.82, clamp(uMemory + uCursorStr*0.5,0.,1.));
+    float val = min(e*(1.-e*.4),.7-e)/35. * (0.5 + uMemory*1.1 + uCursorStr*1.5);
+    col += hsv(hue, sat, clamp(val,0.,1.));
+
+    // Step ray forward
+    q  += rd * e * Rv * 0.1;
+    vec3 p = q;
+
+    // Logarithmic radial coordinate — hyperbolic depth compression
+    // This is what creates the infinite-depth tunnel illusion:
+    // as Rv grows, log2(Rv) grows slowly → space stretches toward infinity
+    Rv = length(p);
+    p  = vec3(
+      log2(max(Rv,1e-4)) - t * speed,
+      exp(1.0 - p.z / max(Rv,1e-4)),
+      atan(p.y, p.x) + cos(t) * 0.22
+    );
+
+    // Multi-octave sine fractal — generates the tunnel wall texture
+    // and the ring-like structures that appear as depth layers
+    e = --p.y;
+    float s = 1.;
+    for(int si=0;si<6;si++){
+      s += s;
+      e += sin(dot(sin(p.zxy*s) - 0.5, 1.0 - cos(p.yxz*s))) / s;
+    }
+  }
+
+  // ── TUNNEL SHAPING ─────────────────────────────────────────────
+  // Vignette: edge of billboard circle dims — feels like looking
+  // through a circular aperture into the singularity
+  float aperture = 1.0 - smoothstep(0.0, 1.0, dist);
+  col *= (0.35 + aperture * 1.4);
+
+  // Photon ring glow at the aperture rim
+  float ang    = atan(uv.y, uv.x);
+  float angMod = 0.5 + 0.5*sin(ang*3.+t) + 0.3*sin(ang*5.-t)*uMemory;
+  float breathe  = 0.5+0.5*sin(t);
+  float rimInner = smoothstep(0.62,0.68,dist) * smoothstep(0.80,0.72,dist);
+  float rimOuter = smoothstep(0.82,0.88,dist) * smoothstep(0.98,0.90,dist);
+  rimInner *= (0.5 + 0.5*angMod);
+  rimOuter *= (0.3 + 0.7*angMod) * clamp(uMemory*2.,0.,1.);
+
+  float mh = uMemory;
+  vec3 ringCol = mh<.33 ? mix(vec3(0.08,0.03,0.18),vec3(0.55,0.18,0.80),mh/.33)
+               :mh<.66 ? mix(vec3(0.55,0.18,0.80),vec3(1.20,0.50,0.08),(mh-.33)/.33)
+               :          mix(vec3(1.20,0.50,0.08),vec3(1.80,1.60,1.10),(mh-.66)/.34);
+
+  float rimStr = (rimInner*1.0 + rimOuter*0.65) * (0.4 + breathe*0.6);
+  col += ringCol * rimStr * (1.2 + uMemory*0.8);
+
+  // ── CENTRAL FLOW STREAM ────────────────────────────────────────
+  // White light continuously flowing inward toward the singularity.
+  // On interaction (cursor + memory) transitions to gold sparkling.
+  //
+  // Radial mask: only fills the inner core region (dist < 0.40)
+  // Feathers outward to blend with the fractal tunnel walls.
+  float coreDist = 0.38;
+  float coreBlend= smoothstep(coreDist, 0.0, dist);   // 1 at centre, 0 at edge
+
+  // Flow field: separate fast-moving fractal pass for the stream.
+  // Uses a tighter, faster version of the same kernel.
+  // Speed is always-on — the stream never stops, just changes color.
+  // Flow speed — integer k=2 base for seamless loop
+  float flowSpeed = 2.0                        // k=2 integer base
+                  + uCursorStr * 2.0 * memWin  // windowed
+                  + uMemory    * 1.0 * memWin;
+
+  // Cursor pulls the flow vortex off-centre
+  vec2 flowUv  = uv * 0.6 + uCursor * uCursorStr * 0.14;
+  vec3 fp = vec3(
+    log2(max(length(flowUv),1e-4)) - t * flowSpeed,
+    exp(1.0 - dist * 1.8),
+    atan(flowUv.y, flowUv.x) + sin(t) * 0.35
+  );
+
+  float fe = fp.y - 1.0;
+  float fs = 1.0;
+  for(int fi=0;fi<5;fi++){
+    fs += fs;
+    fe += sin(dot(sin(fp.zxy*fs) - 0.5, 1.0 - cos(fp.yxz*fs))) / fs;
+  }
+  // fe is now the flow field value — positive = bright filament
+  float flowField = clamp(fe * 0.22 + 0.30, 0.0, 1.0);
+
+  // Interaction level — combined cursor + memory signal
+  float interact = clamp(uCursorStr * 1.4 + uMemory * 0.8, 0.0, 1.0);
+
+  // Sparkling: high-frequency shimmer on the fractal peaks
+  // Uses sin of the flow field at high octave to get flickering bright points
+  float sparkle  = pow(clamp(sin(fe*12.0 + t*6.0)*0.5+0.5, 0.0, 1.0), 4.0)
+                 * flowField * interact;
+
+  // Color transition:
+  //   Rest     → pure cold white (like starlight pouring inward)
+  //   interact → warm gold, then bright gold-white with sparks
+  vec3 flowWhite= vec3(0.92, 0.96, 1.00) * (1.2 + flowField*0.8);
+  vec3 flowGold = vec3(1.40, 0.85, 0.10);                // deep gold
+  vec3 sparkGold= vec3(1.80, 1.45, 0.55);                // bright gold-white
+  vec3 sparkPeak= vec3(2.20, 2.00, 1.20);                // hot white peak
+
+  // Base stream color: white at rest, gold at high interact
+  vec3 flowCol  = mix(flowWhite, flowGold, interact);
+  // Add sparkle peaks — gold brightens to near-white at spark points
+  flowCol += mix(vec3(0.), sparkPeak, sparkle*0.9) * interact;
+  // Additional gold shimmer layer — slower, broader
+  float shimmer = pow(clamp(sin(fe*5.0 - t*4.0)*0.5+0.5,0.0,1.0),3.0)
+                * flowField * interact * 0.6;
+  flowCol += sparkGold * shimmer;
+
+  // Brightness: always visible as white glow, intensifies on interact
+  float flowBright = (0.18 + flowField * 0.55) * (0.6 + interact * 1.2);
+
+  // Composite stream over the tunnel — only in the core region
+  // Use screen-blend-style additive for the glow
+  vec3 streamCol   = flowCol * flowBright * coreBlend;
+  float streamAlpha= coreBlend * clamp(flowBright * 0.95, 0.0, 1.0);
+
+  // Add stream on top of tunnel fractal
+  col = col * (1.0 - streamAlpha * 0.35) + streamCol;
+
+  // Pulse flash — seed event bloom through the tunnel + stream
+  col += vec3(0.45,0.18,0.90) * uPulse * aperture * (0.8 - dist*0.5);
+  // Pulse also flares the stream gold
+  col += sparkGold * uPulse * coreBlend * 1.2;
+
+  // ── FINAL ALPHA ────────────────────────────────────────────────
+  float edgeFade  = smoothstep(1.0, 0.88, dist);
+  gl_FragColor = vec4(col, clamp(edgeFade, 0., 1.));
+}`;
+
+const horizonMat=new THREE.ShaderMaterial({
+  uniforms:{
+    uT:{value:0},uMemory:{value:0},uCursorStr:{value:0},uPulse:{value:0},
+    uCursor:{value:new THREE.Vector2()},
+    uRes:{value:new THREE.Vector2(window.innerWidth,window.innerHeight)}},
+  vertexShader:horizonVS,fragmentShader:horizonFS,
+  transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,
+  side:THREE.DoubleSide});
+
+// horizonMat uRes updated via central resize() handler above
+
+// Billboard — CircleGeometry so no rectangular edges ever show
+const horizonMesh=new THREE.Mesh(new THREE.CircleGeometry(140,80),horizonMat);
+horizonMesh.frustumCulled=false;
+scene.add(horizonMesh);
+
+// ═════════════════════════════════════════════════════════════════
+
+// ── Accretion Disk — rotating torus of hot plasma ─────────────────
+const diskVS=`
+varying vec2 vUv; varying float vDist;
+void main(){vUv=uv;vDist=length(position.xz);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
+const diskFS=`
+precision highp float;
+varying vec2 vUv; varying float vDist;
+uniform float uT,uMemory,uCursorStr;
+uniform vec2  uCursor;
+
+vec3 hsv(float h,float s,float v){
+  vec3 c=clamp(abs(fract(h+vec3(0.,2./3.,1./3.))*6.-3.)-1.,0.,1.);
+  return v*mix(vec3(1.),c,s);
+}
+
+void main(){
+  // vUv.x = 0→1 around the torus ring (angular)
+  // vUv.y = 0→1 across the tube cross-section
+  float ang  = vUv.x * 6.28318;   // 0→TAU around ring
+  float cross = vUv.y * 2.0 - 1.0; // -1→1 across tube
+  float t    = uT * 6.28318;       // k=1, loop-safe
+
+  // ── FRACTAL PROJECTION ONTO DISK SURFACE ────────────────────────
+  // Map torus UV into the same (log-radial, angular, depth) space
+  // as the tunnel raymarcher — disk surface IS the cross-section
+  // of the fractal field at one radial slice.
+  //
+  // p.x  = log-radial coordinate (like log2(R)-t in tunnel)
+  //        ang drives the azimuthal position around the ring
+  // p.y  = cross-section depth (tube interior vs exterior)
+  // p.z  = angular phase (atan equivalent)
+
+  // Speed: memory accelerates the plasma flow, cursor spikes it
+  float speed = 0.55 + uMemory*1.4 + uCursorStr*1.8;
+
+  // Cursor warps the angular phase — creates gravitational drag asymmetry
+  float cursorDrag = dot(uCursor, vec2(cos(ang), sin(ang))) * uCursorStr * 0.35;
+
+  vec3 p = vec3(
+    ang * 1.8 - t * speed,          // log-radial: azimuth flowing with time
+    exp(1.0 - abs(cross) * 1.4),    // cross-section: bright at equator, dim at edges
+    ang + cos(t) * 0.22 + cursorDrag
+  );
+
+  // Multi-octave sine fractal — same kernel as tunnel
+  // Generates the plasma hotspot pattern on the disk surface
+  float e = p.y - 1.0;
+  float s = 1.0;
+  for(int si=0;si<6;si++){
+    s += s;
+    e += sin(dot(sin(p.zxy*s) - 0.5, 1.0 - cos(p.yxz*s))) / s;
+  }
+
+  // e is now the fractal field value — map to density
+  // Clamp to positive, cross-section envelope keeps it on the torus surface
+  float crossEnv = 1.0 - cross*cross;   // quadratic falloff across tube
+  crossEnv = crossEnv * crossEnv;
+  float dens = clamp(e * 0.18 + 0.22, 0.0, 1.0) * crossEnv;
+
+  // Physically accurate brightness gradient:
+  // inner edge (low ang radius proxy) brighter — Keplerian velocity effect
+  // We approximate via sin of phase — peaks at certain azimuth angles
+  float keplerian = 0.55 + 0.45*sin(ang*1.0 - t*3.0);  // k=3, orbital frequency
+  dens *= keplerian;
+
+  // ── COLOR — memory-driven plasma temperature ────────────────────
+  // Cold: deep purple-void (dormant, low accretion)
+  // Warm: orange-amber (active accretion)
+  // Hot:  white-blue (fully energised, high memory + cursor)
+  float heat = clamp(uMemory + uCursorStr*0.4, 0.0, 1.0);
+  float hue  = mix(0.75, 0.08, heat);   // purple→orange
+  float sat  = mix(0.55, 0.90, heat);
+  // Fractal field modulates local brightness — hotspots glow brighter
+  float localHeat = clamp(dens * 2.2, 0.0, 1.0);
+  float val  = dens * (0.4 + heat*1.2 + localHeat*0.8);
+
+  vec3 col = hsv(hue, sat, clamp(val, 0.0, 1.8));
+
+  // Super-bright hotspots at fractal peaks — the plasma clumps
+  float spike = clamp((e*0.18+0.22 - 0.35)*3.0, 0.0, 1.0);
+  col += vec3(1.4,0.9,0.4) * spike * crossEnv * (0.3 + heat*0.9);
+
+  // Cursor brightens the disk locally along the drag direction
+  float cursorBright = abs(cursorDrag) * uCursorStr * 0.6;
+  col += col * cursorBright;
+
+  float alpha = clamp(dens * (0.6 + heat*0.5), 0.0, 0.92);
+  gl_FragColor = vec4(col, alpha);
+}`;
+const diskMat=new THREE.ShaderMaterial({
+  uniforms:{uT:{value:0},uMemory:{value:0},
+    uCursorStr:{value:0},uCursor:{value:new THREE.Vector2()}},
+  vertexShader:diskVS,fragmentShader:diskFS,
+  transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide});
+const disk=new THREE.Mesh(new THREE.TorusGeometry(52,14,24,120),diskMat);
+disk.rotation.x=Math.PI*0.18; // slight tilt — inclined disk
+scene.add(disk);
+
+// ── Gravitational lens haze sphere — transparent shell ────────────
+const lensVS=`varying vec3 vNorm,vPos;void main(){vNorm=normalize(normalMatrix*normal);vPos=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
+const lensFS=`
+varying vec3 vNorm,vPos;
+uniform float uT,uMemory;
+void main(){
+  float t=uT*6.2832;
+  float fresnel=pow(1.-abs(dot(vNorm,vec3(0.,0.,1.))),3.5);
+  float pulse=0.5+0.5*sin(t*1.0);
+  float mem2=clamp((uMemory-.12)/.88,0.,1.);
+  float dens=fresnel*(0.15+mem2*0.55)*pulse;
+  vec3 col=mix(vec3(0.10,0.04,0.18),vec3(0.60,0.25,1.00),mem2*fresnel);
+  gl_FragColor=vec4(col,clamp(dens,0.,.55));
+}`;
+const lensMat=new THREE.ShaderMaterial({
+  uniforms:{uT:{value:0},uMemory:{value:0}},
+  vertexShader:lensVS,fragmentShader:lensFS,
+  transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.BackSide});
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(95,48,48),lensMat));
+// ═════════════════════════════════════════════════════════════════
+//  MINI BLACK HOLES — infinite bid lifecycle
+//
+//  Phase 1 — Growing (bids 1–8):  2 → 8 BHs, each new bid spawns one
+//  Phase 2 — Cycling (bids 9+):   oscillates back 8→2, then 2→8 etc.
+//             Each bid implodes the oldest bid-spawned BH (index 2),
+//             then when count hits 2 a new one spawns again.
+//             Effectively the constellation breathes: expands then contracts.
+//
+//  Color cycle interval = max(1 min, 60 − bidCount) minutes
+//    bid 1 = 59 min, bid 30 = 30 min, bid 59 = 1 min, bid 60+ = 1 min
+//  Color cycle FREEZES (no more changes) once interval ≤ 10 min (bid 50+)
+//    The art settles into its final chromatic state for the last stretch.
+//
+//  Each BH is 5% smaller than prev: scale = BASE_SCALE × 0.95^n
+//  Orbit radius grows: BASE_ORBIT + n×80
+//  Loop-safe: orbits pure t-based, flames gated by _memWindow.
+// ═════════════════════════════════════════════════════════════════
+const BASE_MINI_SCALE = 0.32;
+const BASE_MINI_ORBIT = 350;
+const MAX_MINI        = 8;
+const MIN_MINI        = 2;   // never go below 2 (the originals)
+const FLAME_PER       = 80;
+const FLAME_TOT       = FLAME_PER * MAX_MINI;
+
+// 6 plasma palettes for color cycle
+const MINI_PALETTES = [
+  [new THREE.Color(0.55,0.18,0.90), new THREE.Color(0.80,0.25,1.00)],  // void-purple
+  [new THREE.Color(1.40,0.55,0.08), new THREE.Color(1.80,0.90,0.20)],  // plasma-orange
+  [new THREE.Color(0.10,0.55,1.80), new THREE.Color(0.40,0.90,2.00)],  // ice-blue
+  [new THREE.Color(1.80,0.15,0.10), new THREE.Color(2.00,0.50,0.20)],  // ember-red
+  [new THREE.Color(0.10,0.85,0.75), new THREE.Color(0.30,1.20,0.90)],  // aurora-teal
+  [new THREE.Color(1.60,1.20,0.08), new THREE.Color(1.80,1.60,0.40)],  // gold
+];
+
+const miniGroups = [];
+let bidCount        = 0;
+let bidMemoryBoost  = 0;
+let bidHueOffset    = 0;
+let bidTotalETH     = 0;
+let lastBidderShort = '—';
+let cosmicEra       = 0;
+// Direction of BH count: +1 = growing toward MAX, -1 = shrinking toward MIN
+let bhDirection = 1;
+
+function miniScaleForIdx(n){ return BASE_MINI_SCALE * Math.pow(0.95, n); }
+function miniOrbitForIdx(n){ return BASE_MINI_ORBIT + n * 80; }
+
+function spawnMiniBlackHole(bidderHue){
+  const mi     = miniGroups.length;
+  if(mi >= MAX_MINI) return;
+  const sc     = miniScaleForIdx(mi);
+  const orbit  = miniOrbitForIdx(mi);
+  const phaseOfs = mi / MAX_MINI;
+  const palIdx   = mi % MINI_PALETTES.length;
+
+  const coreGeo = new THREE.SphereGeometry(22*sc, 32, 32);
+  const billGeo = new THREE.CircleGeometry(140*sc, 48);
+  const dskGeo  = new THREE.TorusGeometry(52*sc, 14*sc, 16, 60);
+  const lensGeo = new THREE.SphereGeometry(95*sc, 28, 28);
+
+  const group = new THREE.Group();
+  group.frustumCulled = false;
+  group.scale.setScalar(0.001); // start invisible — fade in over 2s
+  scene.add(group);
+  group.add(new THREE.Mesh(coreGeo, new THREE.MeshBasicMaterial({color:0x000000})));
+  const bill = new THREE.Mesh(billGeo, horizonMat);
+  bill.frustumCulled = false;
+  group.add(bill);
+  const dsk = new THREE.Mesh(dskGeo, diskMat);
+  dsk.rotation.x = Math.PI * 0.18;
+  group.add(dsk);
+  group.add(new THREE.Mesh(lensGeo, lensMat));
+
+  miniGroups.push({
+    group, bill, dsk, phaseOfs, orbit, sc,
+    flameBase: mi * FLAME_PER, palIdx,
+    colorLerpTarget: null, colorLerpT: 1.0,
+    spawnT: 0.0, spawning: true,
+    imploding: false, implodeT: 0.0
+  });
+}
+
+// Implode oldest bid-spawned BH (index MIN_MINI = first non-original)
+// Called when BH count is at MAX and a new bid arrives
+function implodeOldestBidBH(){
+  if(miniGroups.length <= MIN_MINI) return;
+  // Find first non-imploding bid-spawned BH (index >= MIN_MINI)
+  // Spawning BHs are valid targets — they'll just shrink from current scale
+  for(let i = MIN_MINI; i < miniGroups.length; i++){
+    if(!miniGroups[i].imploding){
+      miniGroups[i].imploding = true;
+      miniGroups[i].implodeT  = 0.0;
+      miniGroups[i].spawning  = false; // cancel spawn animation, start implode
+      return;
+    }
+  }
+}
+
+// Called after every bid to update BH count direction and trigger spawn/implode
+function updateBHLifecycle(bidHue){
+  const count = miniGroups.length;
+  // Count how many are actively imploding (not yet removed)
+  const implodingCount = miniGroups.filter(mg=>mg.imploding).length;
+  const activeCount    = count - implodingCount;
+
+  if(bhDirection === 1){
+    // Growing phase: spawn new BH if under MAX
+    if(count < MAX_MINI){
+      spawnMiniBlackHole(bidHue);
+    } else {
+      // Hit MAX — flip direction, start shrinking
+      bhDirection = -1;
+      implodeOldestBidBH();
+    }
+  } else {
+    // Shrinking phase: implode oldest bid-spawned BH
+    if(activeCount > MIN_MINI){
+      implodeOldestBidBH();
+    } else {
+      // Hit MIN — flip direction, start growing again
+      bhDirection = 1;
+      spawnMiniBlackHole(bidHue);
+    }
+  }
+}
+
+// Spawn the 2 original static BHs
+spawnMiniBlackHole();
+spawnMiniBlackHole();
+
+// ── Color cycle — interval shrinks with each bid, freezes at 10 min ──
+// interval (minutes) = max(1, 60 − bidCount)
+// Freezes entirely when interval reaches 10 min (bidCount >= 50)
+const COLOR_CYCLE_FREEZE_MIN = 10; // freeze at ≤ 10 min interval
+let _colorCycleTimer   = null;
+let _colorCycleFrozen  = false;
+
+function colorCycleIntervalMs(){
+  const minutes = Math.max(1, 60 - bidCount);
+  return minutes * 60 * 1000;
+}
+
+function triggerColorCycle(){
+  if(_colorCycleFrozen) return;
+  if(miniGroups.length < 1) return;
+  const idxA = Math.floor(Math.random() * miniGroups.length);
+  let   idxB = Math.floor(Math.random() * miniGroups.length);
+  if(miniGroups.length > 1) while(idxB === idxA) idxB = Math.floor(Math.random() * miniGroups.length);
+  const newPalA = (miniGroups[idxA].palIdx + 1 + Math.floor(Math.random()*4)) % MINI_PALETTES.length;
+  const newPalB = (miniGroups[idxB].palIdx + 1 + Math.floor(Math.random()*4)) % MINI_PALETTES.length;
+  miniGroups[idxA].colorLerpTarget = newPalA;
+  miniGroups[idxA].colorLerpT      = 0;
+  if(idxB < miniGroups.length){
+    miniGroups[idxB].colorLerpTarget = newPalB;
+    miniGroups[idxB].colorLerpT      = 0;
+  }
+}
+
+function scheduleColorCycle(){
+  if(_colorCycleFrozen) return;
+  if(_colorCycleTimer) clearInterval(_colorCycleTimer);
+  const intervalMs  = colorCycleIntervalMs();
+  const intervalMin = intervalMs / 60000;
+  // Freeze check: if interval is ≤ 10 min, lock current colors permanently
+  if(intervalMin <= COLOR_CYCLE_FREEZE_MIN){
+    _colorCycleFrozen = true;
+    console.log('[SS] Color cycle frozen — art has reached its final chromatic state');
+    return;
+  }
+  _colorCycleTimer = setInterval(()=>{
+    triggerColorCycle();
+    scheduleColorCycle(); // re-evaluate interval after each fire
+  }, intervalMs);
+}
+scheduleColorCycle();
+// Demo: fire once after 5s so color cycle is visible on load
+setTimeout(triggerColorCycle, 5000);
+
+// ── Flame particles per mini-BH ───────────────────────────────────
+// FLAME_PER and FLAME_TOT declared earlier alongside MAX_MINI
+const flameP  = new Float32Array(FLAME_TOT*3).fill(9999);
+const flameA  = new Float32Array(FLAME_TOT);
+const flameC  = new Float32Array(FLAME_TOT*3);
+const flamePool = Array.from({length:FLAME_TOT},()=>({
+  active:false,life:0,maxLife:0,px:0,py:0,pz:0,vx:0,vy:0,vz:0
+}));
+const flameHeads = new Array(MAX_MINI).fill(0);
+
+const flameGeo  = new THREE.BufferGeometry();
+const flamePBuf = new THREE.BufferAttribute(flameP,3); flamePBuf.setUsage(THREE.DynamicDrawUsage);
+const flameABuf = new THREE.BufferAttribute(flameA,1); flameABuf.setUsage(THREE.DynamicDrawUsage);
+const flameCBuf = new THREE.BufferAttribute(flameC,3); flameCBuf.setUsage(THREE.DynamicDrawUsage);
+flameGeo.setAttribute('position',flamePBuf);
+flameGeo.setAttribute('aAlpha',  flameABuf);
+flameGeo.setAttribute('aCol',    flameCBuf);
+
+const flameVS=`
+attribute float aAlpha; attribute vec3 aCol;
+varying float vA; varying vec3 vC;
+void main(){
+  vA=aAlpha; vC=aCol;
+  if(vA<0.005){gl_PointSize=0.;gl_Position=vec4(9999.,9999.,0.,1.);return;}
+  vec4 mv=modelViewMatrix*vec4(position,1.);
+  float dist=length(mv.xyz);
+  gl_PointSize=clamp((3.0+vA*8.0)*280./dist,1.0,32.);
+  gl_Position=projectionMatrix*mv;
+}`;
+const flameFS=`
+precision highp float;
+varying float vA; varying vec3 vC;
+void main(){
+  if(vA<0.005)discard;
+  vec2 uv=gl_PointCoord*2.-1.;
+  float d=dot(uv,uv); if(d>1.)discard;
+  float core=1.-smoothstep(0.,0.18,d);
+  float glow=1.-smoothstep(0.,1.,d);
+  vec3 col=vC*(1.+core*1.2);
+  gl_FragColor=vec4(col,(core*1.1+glow*0.45)*vA);
+}`;
+const flameMat=new THREE.ShaderMaterial({
+  vertexShader:flameVS,fragmentShader:flameFS,
+  transparent:true,depthWrite:false,blending:THREE.AdditiveBlending
+});
+const flamePts=new THREE.Points(flameGeo,flameMat);
+flamePts.frustumCulled=false;
+scene.add(flamePts);
+
+// ── Mini-BH + flame tick ──────────────────────────────────────────
+function tickMinis(t, dt){
+  const interact=clamp(cursorStrength+memoryLevel*0.85,0,1);
+
+  for(let mi=0;mi<miniGroups.length;mi++){
+    const mg=miniGroups[mi];
+    const {group,bill,dsk,phaseOfs,orbit,sc,flameBase}=mg;
+
+    // ── Smooth fade-in on spawn — eased over 2s, no pop ─────────────
+    if(mg.spawning){
+      mg.spawnT = Math.min(1.0, mg.spawnT + dt * 0.5); // 2s to full size
+      // Ease out cubic: smooth deceleration into final scale
+      const ease = 1.0 - Math.pow(1.0 - mg.spawnT, 3);
+      group.scale.setScalar(ease);
+      if(mg.spawnT >= 1.0){ mg.spawning = false; group.scale.setScalar(1.0); }
+    }
+
+    // ── Outbid implosion — eased over 3s, then remove ────────────────
+    if(mg.imploding){
+      mg.implodeT = Math.min(1.0, mg.implodeT + dt / 3.0);
+      const shrink = Math.pow(1.0 - mg.implodeT, 3); // ease-in cubic
+      group.scale.setScalar(Math.max(0.001, shrink));
+      if(mg.implodeT >= 1.0){
+        scene.remove(group);
+        miniGroups.splice(mi, 1);
+        mi--; // ← critical: rewind index after splice so next element isn't skipped
+        // Re-index walletToBH
+        for(const [k,v] of walletToBH.entries()){ if(v > mi+1) walletToBH.set(k, v-1); }
+        // Redistribute phaseOfs evenly
+        for(let j=0; j<miniGroups.length; j++) miniGroups[j].phaseOfs = j / MAX_MINI;
+        scheduleColorCycle();
+        updateHUD();
+      }
+      continue; // skip position/flame while imploding
+    }
+
+    // Orbit: full circle, evenly phased, k=1 → loop-safe
+    const orbitAngle = TAU * t + phaseOfs * TAU;
+    const gx = orbit * Math.cos(orbitAngle);
+    const gz = orbit * Math.sin(orbitAngle);
+    const gy = 18 * Math.sin(TAU*2*t + phaseOfs*TAU);  // k=2 bob
+
+    group.position.set(gx, gy, gz);
+    bill.quaternion.copy(cam.quaternion);
+    dsk.rotation.z = TAU*t;
+
+    // ── Color cycle lerp — 30s smooth pulse using real dt ────────────
+    if(mg.colorLerpTarget !== null && mg.colorLerpT < 1.0){
+      mg.colorLerpT = Math.min(1.0, mg.colorLerpT + dt / 30.0);
+      // Gentle scale pulse during transition — sin envelope, peaks at midpoint
+      const pulse = 1.0 + 0.06 * Math.sin(mg.colorLerpT * Math.PI);
+      if(!mg.spawning) group.scale.setScalar(pulse);
+      if(mg.colorLerpT >= 1.0){
+        mg.palIdx = mg.colorLerpTarget;
+        mg.colorLerpTarget = null;
+        if(!mg.spawning) group.scale.setScalar(1.0);
+      }
+    }
+
+    // ── Flame emission — gated by interaction and memWindow ──────────
+    if(interact>0.08 && _memWindow>0.04 && !mg.spawning){
+      const flameR=22*sc*1.6;
+      const cnt=Math.floor(interact*4)+1;
+      for(let k=0;k<cnt;k++){
+        const slotIdx = flameBase + (flameHeads[mi] % FLAME_PER);
+        flameHeads[mi]=(flameHeads[mi]+1)%FLAME_PER;
+        const globalIdx = slotIdx;
+        if(globalIdx >= FLAME_TOT) continue;
+        const p=flamePool[globalIdx];
+        const theta=Math.random()*TAU;
+        const phi=Math.acos(2*Math.random()-1);
+        p.active=true; p.life=1.0; p.maxLife=0.4+Math.random()*0.5;
+        p.px=gx+flameR*Math.sin(phi)*Math.cos(theta);
+        p.py=gy+flameR*Math.sin(phi)*Math.sin(theta);
+        p.pz=gz+flameR*Math.cos(phi);
+        const nx=p.px-gx,ny=p.py-gy,nz=p.pz-gz;
+        const spd=1.5+Math.random()*2.5;
+        p.vx=nx*spd*0.06+(Math.random()-.5)*0.4;
+        p.vy=ny*spd*0.06+Math.random()*0.8;
+        p.vz=nz*spd*0.06+(Math.random()-.5)*0.4;
+      }
+    }
+  }
+
+  // Tick all flame particles
+  for(let i=0;i<FLAME_TOT;i++){
+    const p=flamePool[i];
+    if(!p.active){flameA[i]=0;flameP[i*3]=9999;continue;}
+    p.px+=p.vx; p.py+=p.vy; p.pz+=p.vz;
+    p.vy*=0.97; p.vx*=0.92; p.vz*=0.92;
+    p.life=Math.max(0,p.life-1/60/p.maxLife);
+    if(p.life<=0){p.active=false;flameA[i]=0;flameP[i*3]=9999;continue;}
+    flameP[i*3]=p.px; flameP[i*3+1]=p.py; flameP[i*3+2]=p.pz;
+    const age=1-p.life;
+    flameC[i*3  ]=1.4-age*0.1;
+    flameC[i*3+1]=0.3+age*0.5+clamp(cursorStrength+memoryLevel*0.85,0,1)*0.3;
+    flameC[i*3+2]=age*0.3*clamp(cursorStrength+memoryLevel*0.85,0,1);
+    flameA[i]=clamp(p.life<0.2?p.life/0.2:1.0,0,1)*0.85;
+  }
+  flamePBuf.needsUpdate=true;
+  flameABuf.needsUpdate=true;
+  flameCBuf.needsUpdate=true;
+}
+
+
+// ── Singularity fractal surface — animated noise on inner sphere ──
+const singVS=`varying vec3 vPos,vNorm;uniform float uT;
+void main(){
+  vPos=position;vNorm=normalize(normalMatrix*normal);
+  float t=uT*6.2832;
+  // Fractal surface displacement — integer harmonics
+  vec3 disp=vNorm*(
+    sin(position.x*.22+t*3.)*0.8+
+    sin(position.y*.31+t*2.)*0.6+
+    sin(position.z*.19+t*5.)*0.5+
+    sin(position.x*.47+position.z*.33+t*4.)*0.4
+  )*0.35;
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(position+disp,1.);
+}`;
+const singFS=`
+varying vec3 vPos,vNorm;
+uniform float uT,uMemory;
+void main(){
+  float t=uT*6.2832;
+  float n=sin(vPos.x*.22+t*3.)*.5+.5;
+  float n2=sin(vPos.y*.31+t*2.)*.5+.5;
+  float n3=sin(vPos.z*.19+t*5.)*.5+.5;
+  float frac=n*n2*n3;
+  float mem3=clamp((uMemory-.65)/.35,0.,1.);
+  vec3 dormant=vec3(0.02,0.01,0.04);
+  vec3 activeCol=vec3(0.25,0.10,0.50);
+  vec3 col=mix(dormant,activeCol,frac*mem3);
+  float a=frac*mem3*0.55+0.05;
+  gl_FragColor=vec4(col,clamp(a,0.,0.6));
+}`;
+const singMat=new THREE.ShaderMaterial({
+  uniforms:{uT:{value:0},uMemory:{value:0}},
+  vertexShader:singVS,fragmentShader:singFS,
+  transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(20,32,32),singMat));
+
+// ── Stellar Infall Streams — particle arcs falling into core ──────
+const INFALL_N=800;
+const infallP =new Float32Array(INFALL_N*3);
+const infallPh=new Float32Array(INFALL_N);
+const infallR =new Float32Array(INFALL_N);  // orbit radius
+const infallTh=new Float32Array(INFALL_N);  // orbit inclination
+
+for(let i=0;i<INFALL_N;i++){
+  infallR[i] =80+h(i*5.3+200)*420;
+  infallPh[i]=h(i*7.7+200);
+  infallTh[i]=h(i*11.1+200)*Math.PI;
+  // positions set in shader via angle
+  infallP[i*3]=infallR[i]; infallP[i*3+1]=0; infallP[i*3+2]=0;
+}
+const infallGeo=new THREE.BufferGeometry();
+infallGeo.setAttribute('position',new THREE.BufferAttribute(infallP,3));
+infallGeo.setAttribute('aPh',new THREE.BufferAttribute(infallPh,1));
+infallGeo.setAttribute('aR', new THREE.BufferAttribute(infallR,1));
+infallGeo.setAttribute('aTh',new THREE.BufferAttribute(infallTh,1));
+
+const infallVS=`
+attribute float aPh,aR,aTh;
+varying float vA;
+uniform float uT,uMemory;
+void main(){
+  float t=uT*6.2832;
+  // Phase-locked orbital speed: k=3+floor(aPh*4) ensures k∈ℤ+
+  float kOrbit=3.+floor(aPh*4.);  // k=3..6
+  float angle=t*kOrbit+aPh*6.2832;
+  // Infall spiral — radius shrinks via sin modulation (not linear)
+  float rShrink=aR*(0.55+0.45*sin(t*1.+aPh*6.2832));
+  float cosT=cos(aTh),sinT=sin(aTh);
+  vec3 pos=vec3(
+    rShrink*cos(angle),
+    rShrink*sin(angle)*cosT,
+    rShrink*sin(angle)*sinT
+  );
+  // Brightness: brighter near core, stronger with memory
+  float nearCore=1.-clamp(rShrink/500.,0.,1.);
+  float memStr=clamp((uMemory-.15)/.85,0.,1.);
+  vA=nearCore*nearCore*memStr*(0.5+0.5*sin(t*2.+aPh*6.2832));
+  vec4 mv=modelViewMatrix*vec4(pos,1.);
+  float dist=length(mv.xyz);
+  gl_PointSize=clamp((1.2+vA*3.5)*180./dist,0.3,12.);
+  gl_Position=projectionMatrix*mv;
+}`;
+const infallFS=`
+varying float vA;
+void main(){
+  if(vA<.005)discard;
+  vec2 uv=gl_PointCoord*2.-1.;float d=dot(uv,uv);if(d>1.)discard;
+  float core=1.-smoothstep(0.,.22,d);
+  float glow=1.-smoothstep(0.,1.,d);
+  vec3 col=mix(vec3(0.4,0.2,0.8),vec3(1.2,0.8,0.3),core);
+  gl_FragColor=vec4(col,(core*.9+glow*.3)*vA);
+}`;
+const infallMat=new THREE.ShaderMaterial({
+  uniforms:{uT:{value:0},uMemory:{value:0}},
+  vertexShader:infallVS,fragmentShader:infallFS,
+  transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+infallGeo.setAttribute('position',new THREE.BufferAttribute(infallP,3));
+const infallPts=new THREE.Points(infallGeo,infallMat);
+infallPts.frustumCulled=false;
+scene.add(infallPts);
+
+// ── Ghost Orbit Rings — residual light echoes of captured paths ───
+const GHOST_RINGS=5;
+const ghostRingMats=[];
+for(let gi=0;gi<GHOST_RINGS;gi++){
+  const r=35+gi*18+h(gi*7.3+700)*12;
+  const incl=h(gi*11.7+700)*Math.PI*0.8;
+  const gRingVS=`
+varying float vA;
+uniform float uT,uMemory,uPhOffset;
+void main(){
+  float mem2=clamp((uMemory-.25)/.75,0.,1.);
+  float t=uT*6.2832;
+  float pulse=0.5+0.5*sin(t*${(gi%3)+1}.+uPhOffset);
+  vA=mem2*pulse*(0.4+0.6*mem2);
+  vec4 mv=modelViewMatrix*vec4(position,1.);
+  float dist=length(mv.xyz);
+  gl_PointSize=clamp((0.8+vA*2.5)*200./dist,.2,8.);
+  gl_Position=projectionMatrix*mv;
+}`;
+  const gRingFS=`
+varying float vA;
+void main(){
+  if(vA<.004)discard;
+  vec2 uv=gl_PointCoord*2.-1.;float d=dot(uv,uv);if(d>1.)discard;
+  float core=1.-smoothstep(0.,.30,d);
+  vec3 col=vec3(0.25,0.08,0.55);
+  gl_FragColor=vec4(col,(core*.8+(1.-smoothstep(0.,1.,d))*.2)*vA);
+}`;
+  const pts2=512;
+  const gPos=new Float32Array(pts2*3);
+  for(let k=0;k<pts2;k++){
+    const a=k/pts2*TAU;
+    gPos[k*3  ]=r*Math.cos(a);
+    gPos[k*3+1]=r*Math.sin(a)*Math.cos(incl);
+    gPos[k*3+2]=r*Math.sin(a)*Math.sin(incl);
+  }
+  const gGeo=new THREE.BufferGeometry();
+  gGeo.setAttribute('position',new THREE.BufferAttribute(gPos,3));
+  const gMat=new THREE.ShaderMaterial({
+    uniforms:{uT:{value:0},uMemory:{value:0},uPhOffset:{value:h(gi*23.1+700)*TAU}},
+    vertexShader:gRingVS,fragmentShader:gRingFS,
+    transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+  const gPts=new THREE.Points(gGeo,gMat);
+  gPts.frustumCulled=false;
+  scene.add(gPts);
+  ghostRingMats.push(gMat);
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  ROCKS — 200 faceted asteroid rocks + guaranteed collisions
+// ═════════════════════════════════════════════════════════════════
+const ROCK_N    = 200;
+const BH_CLEAR  = 600;   // rocks live in background, well behind camera orbit (~420)
+const COLL_COUNT= 20;
+
+// ── 5 shape variants — non-indexed for true flatShading ──────────
+const ROCK_VARIANTS = 5;
+const rockGeos = [];
+for(let v=0;v<ROCK_VARIANTS;v++){
+  let geo = new THREE.IcosahedronGeometry(1, 0);
+  const pos = geo.attributes.position;
+  for(let vi=0;vi<pos.count;vi++){
+    const nx=pos.getX(vi),ny=pos.getY(vi),nz=pos.getZ(vi);
+    const n  = 0.62 + h(vi*7.3+v*31.1+200)*0.76;
+    const ny2= 0.55 + h(vi*11.7+v*19.3+200)*0.90;
+    pos.setXYZ(vi,nx*n,ny*ny2,nz*n);
+  }
+  geo.computeVertexNormals();
+  rockGeos.push(geo);
+}
+
+const rkColPalette = [0x9a7858,0x708860,0x807088,0x8c6e42,0x587098,0x805868];
+
+const rkRadius  = new Float32Array(ROCK_N);
+const rkPhase   = new Float32Array(ROCK_N);
+const rkIncl    = new Float32Array(ROCK_N);
+const rkKA      = new Float32Array(ROCK_N);
+const rkSize    = new Float32Array(ROCK_N);
+const rkColIdx  = new Float32Array(ROCK_N);
+const rkVariant = new Float32Array(ROCK_N);
+
+// Collision pairs: same radius + kA, tiny phase gap so they genuinely pass close
+for(let p=0;p<COLL_COUNT;p++){
+  const ia=p*2, ib=p*2+1;
+  const r  = BH_CLEAR + 80 + h(p*7.3+900)*500;   // 680–1180 units — background
+  const kA = 1 + Math.floor(h(p*11.7+900)*3);
+  const ph = h(p*17.3+900);
+  const gap= 0.008 + h(p*23.1+900)*0.010;
+  rkRadius[ia]=r;      rkRadius[ib]=r;
+  rkPhase[ia] =ph;     rkPhase[ib] =ph+gap;
+  rkIncl[ia]  =0;      rkIncl[ib]  =0;
+  rkKA[ia]    =kA;     rkKA[ib]    =kA;
+  rkSize[ia]  =2.5+h(p*29.7+900)*5.0;   // 2.5–7.5 (was 5–15)
+  rkSize[ib]  =2.0+h(p*31.1+900)*4.0;   // 2.0–6.0 (was 4–12)
+  rkColIdx[ia]=Math.floor(h(ia*7+900)*6);
+  rkColIdx[ib]=Math.floor(h(ib*7+900)*6);
+  rkVariant[ia]=Math.floor(h(ia*11+900)*ROCK_VARIANTS);
+  rkVariant[ib]=Math.floor(h(ib*11+900)*ROCK_VARIANTS);
+}
+
+// Free-orbit rocks
+for(let i=COLL_COUNT*2;i<ROCK_N;i++){
+  rkRadius[i]  = BH_CLEAR + 50 + Math.pow(h(i*5.3+800),0.5)*700;   // 650–1300 units
+  rkPhase[i]   = h(i*7.1+800);
+  rkIncl[i]    = (h(i*11.3+800)-0.5)*Math.PI*0.6;
+  rkKA[i]      = 1+Math.floor(h(i*13.7+800)*3);
+  rkSize[i]    = 1.5+Math.pow(h(i*19.3+800),1.1)*5.5;   // 1.5–7.0 (was 3–14)
+  rkColIdx[i]  = Math.floor(h(i*23.7+800)*6);
+  rkVariant[i] = Math.floor(h(i*27.1+800)*ROCK_VARIANTS);
+}
+
+const rockGroups = [];
+const _goldColor  = new THREE.Color();
+const _stoneColor = new THREE.Color();
+
+for(let ci=0;ci<6;ci++){
+  for(let vi=0;vi<ROCK_VARIANTS;vi++){
+    const indices=[];
+    for(let i=0;i<ROCK_N;i++) if(rkColIdx[i]===ci&&rkVariant[i]===vi) indices.push(i);
+    if(!indices.length) continue;
+    const mat=new THREE.MeshPhongMaterial({
+      color:new THREE.Color(rkColPalette[ci]),
+      emissive:new THREE.Color(0x080604),
+      emissiveIntensity:0.8,
+      shininess:4,
+      flatShading:true
+    });
+    const mesh=new THREE.InstancedMesh(rockGeos[vi],mat,indices.length);
+    mesh.frustumCulled=false;
+    scene.add(mesh);
+    rockGroups.push({mesh,mat,indices,ci});
+  }
+}
+
+const rkRotAxis=[];
+const rkRotSpeed=new Float32Array(ROCK_N);
+for(let i=0;i<ROCK_N;i++){
+  rkRotAxis.push(new THREE.Vector3(
+    h(i*29.1+800)*2-1,h(i*31.3+800)*2-1,h(i*37.9+800)*2-1).normalize());
+  rkRotSpeed[i]=1+Math.floor(h(i*41.1+800)*4);
+}
+
+const _rkMtx =new THREE.Matrix4();
+const _rkPos2=new THREE.Vector3();
+const _rkQuat=new THREE.Quaternion();
+const _rkScl =new THREE.Vector3();
+
+// Splash particles
+const SPLASH_N   = 600;
+const splashP    = new Float32Array(SPLASH_N*3).fill(9999);
+const splashA    = new Float32Array(SPLASH_N);
+const splashC    = new Float32Array(SPLASH_N*3);
+const splashPool = Array.from({length:SPLASH_N},()=>({active:false,life:0,maxLife:0,px:0,py:0,pz:0,vx:0,vy:0,vz:0,cr:1,cg:0.9,cb:0.7}));
+let splashHead=0;
+
+const splashGeo     = new THREE.BufferGeometry();
+const splashPosBuf  = new THREE.BufferAttribute(splashP,3); splashPosBuf.setUsage(THREE.DynamicDrawUsage);
+const splashAlphaBuf= new THREE.BufferAttribute(splashA,1); splashAlphaBuf.setUsage(THREE.DynamicDrawUsage);
+const splashColBuf  = new THREE.BufferAttribute(splashC,3); splashColBuf.setUsage(THREE.DynamicDrawUsage);
+splashGeo.setAttribute('position',splashPosBuf);
+splashGeo.setAttribute('aAlpha',splashAlphaBuf);
+splashGeo.setAttribute('aCol',splashColBuf);
+
+const splashVS=`
+attribute float aAlpha; attribute vec3 aCol;
+varying float vA; varying vec3 vC;
+void main(){
+  vA=aAlpha; vC=aCol;
+  if(vA<0.004){gl_PointSize=0.;gl_Position=vec4(9999.,9999.,0.,1.);return;}
+  vec4 mv=modelViewMatrix*vec4(position,1.);
+  float dist=length(mv.xyz);
+  gl_PointSize=clamp((3.5+vA*7.)*350./dist,1.0,28.);
+  gl_Position=projectionMatrix*mv;
+}`;
+const splashFS=`
+precision highp float;
+varying float vA; varying vec3 vC;
+void main(){
+  if(vA<0.004)discard;
+  vec2 uv=gl_PointCoord*2.-1.; float d=dot(uv,uv); if(d>1.)discard;
+  float core=1.-smoothstep(0.,0.15,d);
+  float glow=1.-smoothstep(0.,1.,d);
+  gl_FragColor=vec4(vC*(1.+core),(core*1.1+glow*0.4)*vA);
+}`;
+const splashMat=new THREE.ShaderMaterial({vertexShader:splashVS,fragmentShader:splashFS,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+scene.add(new THREE.Points(splashGeo,splashMat));
+
+// Orbital position — strict BH_CLEAR floor
+function rkPos(i,t,out){
+  const az = TAU*rkKA[i]*t + rkPhase[i]*TAU;
+  const el = rkIncl[i]===0 ? 0 : Math.sin(TAU*t+rkPhase[i]*TAU*2)*rkIncl[i];
+  const r  = Math.max(BH_CLEAR, rkRadius[i] + 20*Math.sin(TAU*2*t+rkPhase[i]*TAU));
+  out.set(r*Math.cos(az)*Math.cos(el), r*Math.sin(el), r*Math.sin(az)*Math.cos(el));
+}
+
+function spawnSplash(wx,wy,wz,cr,cg,cb,cnt){
+  for(let k=0;k<cnt;k++){
+    const idx=splashHead; splashHead=(splashHead+1)%SPLASH_N;
+    const p=splashPool[idx];
+    const theta=Math.random()*TAU, elev=(Math.random()-0.5)*Math.PI;
+    const spd=2.0+Math.random()*5.0;
+    p.active=true; p.life=1.0; p.maxLife=1.2+Math.random()*1.0;
+    p.px=wx;p.py=wy;p.pz=wz;
+    p.vx=Math.cos(elev)*Math.cos(theta)*spd;
+    p.vy=Math.sin(elev)*spd*0.8;
+    p.vz=Math.cos(elev)*Math.sin(theta)*spd;
+    p.cr=cr;p.cg=cg;p.cb=cb;
+  }
+}
+
+// Collision triggers — fires kA times per loop, rocks guaranteed close
+const collPairs=[];
+for(let p=0;p<COLL_COUNT;p++){
+  collPairs.push({ia:p*2,ib:p*2+1,k:rkKA[p*2],ph:rkPhase[p*2]*TAU,cooldown:0});
+}
+
+const _pa=new THREE.Vector3(),_pb=new THREE.Vector3();
+
+function tickRocks(dt){
+  const t=rockTick_t;
+  const interact=clamp(cursorStrength+memoryLevel*0.85,0,1);
+
+  for(const cp of collPairs){
+    if(cp.cooldown>0){cp.cooldown--;continue;}
+    if(Math.sin(cp.k*TAU*t+cp.ph)>0.90 && _memWindow>0.04){
+      rkPos(cp.ia,t,_pa); rkPos(cp.ib,t,_pb);
+      const mx=(_pa.x+_pb.x)*0.5,my=(_pa.y+_pb.y)*0.5,mz=(_pa.z+_pb.z)*0.5;
+      const cr=0.85+interact*0.55,cg=0.70+interact*0.25,cb=0.45-interact*0.35;
+      spawnSplash(mx,my,mz,cr,cg,cb,20+Math.floor(interact*30));
+      cp.cooldown=Math.floor(TF/cp.k*0.80);
+    }
+  }
+
+  for(let i=0;i<SPLASH_N;i++){
+    const p=splashPool[i];
+    if(!p.active){splashA[i]=0;splashP[i*3]=9999;continue;}
+    p.px+=p.vx*dt*40;p.py+=p.vy*dt*40;p.pz+=p.vz*dt*40;
+    p.vx*=0.982;p.vy*=0.982;p.vz*=0.982;
+    p.life=Math.max(0,p.life-dt/p.maxLife);
+    if(p.life<=0){p.active=false;splashA[i]=0;splashP[i*3]=9999;continue;}
+    splashP[i*3]=p.px;splashP[i*3+1]=p.py;splashP[i*3+2]=p.pz;
+    const gl=clamp(interact*1.4,0,1);
+    splashC[i*3  ]=p.cr+(1.5-p.cr)*gl;
+    splashC[i*3+1]=p.cg+(0.9-p.cg)*gl;
+    splashC[i*3+2]=p.cb*(1-gl*0.8);
+    const f=p.life; splashA[i]=clamp(f<0.12?f/0.12:f,0,1)*0.92;
+  }
+  splashPosBuf.needsUpdate=true;splashAlphaBuf.needsUpdate=true;splashColBuf.needsUpdate=true;
+
+  for(const {mesh,mat,indices,ci}of rockGroups){
+    const gl=clamp(interact*1.1,0,1);
+    const sh=0.7+0.3*Math.sin(TAU*3*t);
+    _stoneColor.setHex(rkColPalette[ci]);
+    _goldColor.setRGB(1.45,0.85,0.08);
+    mat.color.lerpColors(_stoneColor,_goldColor,gl*0.82);
+    mat.emissive.setRGB(gl*0.32*sh,gl*0.18*sh,gl*0.02);
+    mat.emissiveIntensity=0.8+gl*2.0;
+    for(let ii=0;ii<indices.length;ii++){
+      const i=indices[ii];
+      rkPos(i,t,_rkPos2);
+      _rkQuat.setFromAxisAngle(rkRotAxis[i],TAU*rkRotSpeed[i]*t+rkPhase[i]*TAU);
+      _rkScl.setScalar(rkSize[i]);
+      _rkMtx.compose(_rkPos2,_rkQuat,_rkScl);
+      mesh.setMatrixAt(ii,_rkMtx);
+    }
+    mesh.instanceMatrix.needsUpdate=true;
+  }
+}
+let rockTick_t=0;
+let _memWindow=0;  // set in render loop, used by tickRocks for splash gating
+
+
+// ── Horizon Expansion Pulse ───────────────────────────────────────
+// Pulse is now fully t-based in the render loop — no wall-clock state needed.
+
+// ═════════════════════════════════════════════════════════════════
+//  MEMORY TRAIL — echo paths, persistent arcs
+// ═════════════════════════════════════════════════════════════════
+const TRAIL_N=800;
+const trailP=new Float32Array(TRAIL_N*3);
+const trailA=new Float32Array(TRAIL_N);
+const trailRnd=new Float32Array(TRAIL_N);
+for(let i=0;i<TRAIL_N;i++){trailP[i*3]=9999;trailA[i]=0;trailRnd[i]=h(i*23.7+400);}
+const trailGeo=new THREE.BufferGeometry();
+const trailPosBuf=new THREE.BufferAttribute(trailP,3);trailPosBuf.setUsage(THREE.DynamicDrawUsage);
+const trailAlphaBuf=new THREE.BufferAttribute(trailA,1);trailAlphaBuf.setUsage(THREE.DynamicDrawUsage);
+trailGeo.setAttribute('position',trailPosBuf);
+trailGeo.setAttribute('aAlpha',trailAlphaBuf);
+trailGeo.setAttribute('aRnd',new THREE.BufferAttribute(trailRnd,1));
+const trailVS=`
+attribute float aAlpha,aRnd;varying float vA;
+void main(){
+  vA=aAlpha;if(vA<.004){gl_PointSize=0.;gl_Position=vec4(9999.,9999.,0.,1.);return;}
+  vec4 mv=modelViewMatrix*vec4(position,1.);float dist=length(mv.xyz);
+  gl_PointSize=clamp((1.6+aRnd*2.+vA*3.8)*230./dist,.3,16.);gl_Position=projectionMatrix*mv;
+}`;
+const trailFS=`
+varying float vA;
+void main(){
+  if(vA<.004)discard;
+  vec2 uv=gl_PointCoord*2.-1.;float d=dot(uv,uv);if(d>1.)discard;
+  float core=1.-smoothstep(0.,.25,d);float glow=1.-smoothstep(0.,1.,d);
+  vec3 col=mix(vec3(.22,.08,.50),vec3(.65,.40,1.0),core);
+  gl_FragColor=vec4(col,(core*.80+glow*.25)*vA);
+}`;
+const trailMat=new THREE.ShaderMaterial({vertexShader:trailVS,fragmentShader:trailFS,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+scene.add(new THREE.Points(trailGeo,trailMat));
+let trailHead=0,trailTimer=0;
+const trailAge=new Float32Array(TRAIL_N).fill(1);
+
+function tickTrails(dt){
+  const emitStr=ss(0.35,0.65,memoryLevel);
+  trailTimer+=dt;
+  if(trailTimer>0.04&&emitStr>0.01&&cursorStrength>0.05){
+    trailTimer=0;
+    const v=new THREE.Vector3(cursor.x,cursor.y,0.5).unproject(cam);
+    const dir=v.sub(cam.position).normalize();
+    const wp=cam.position.clone().addScaledVector(dir,175+Math.random()*80);
+    const count=1+Math.floor(emitStr*3);
+    for(let k=0;k<count;k++){
+      const idx=trailHead;trailHead=(trailHead+1)%TRAIL_N;
+      trailP[idx*3  ]=wp.x+(Math.random()-.5)*10;
+      trailP[idx*3+1]=wp.y+(Math.random()-.5)*10;
+      trailP[idx*3+2]=wp.z+(Math.random()-.5)*10;
+      trailAge[idx]=0;trailA[idx]=emitStr*0.60;
+    }
+  }
+  const persist=ss(0.65,0.92,memoryLevel);
+  const decay=0.25-persist*0.20;
+  for(let i=0;i<TRAIL_N;i++){
+    if(trailA[i]<.004){trailA[i]=0;trailP[i*3]=9999;continue;}
+    trailAge[i]+=dt;trailA[i]=Math.max(0,trailA[i]-dt*decay);
+  }
+  trailPosBuf.needsUpdate=true;trailAlphaBuf.needsUpdate=true;
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  STAR CLUSTER SYSTEM
+// ═════════════════════════════════════════════════════════════════
+const CLUST_N=400;
+const clustP=new Float32Array(CLUST_N*3).fill(9999);
+const clustA=new Float32Array(CLUST_N);
+const clustRnd=new Float32Array(CLUST_N);
+for(let i=0;i<CLUST_N;i++) clustRnd[i]=h(i*37.1+600);
+const clustGeo=new THREE.BufferGeometry();
+const clustPosBuf=new THREE.BufferAttribute(clustP,3);clustPosBuf.setUsage(THREE.DynamicDrawUsage);
+const clustAlphaBuf=new THREE.BufferAttribute(clustA,1);clustAlphaBuf.setUsage(THREE.DynamicDrawUsage);
+clustGeo.setAttribute('position',clustPosBuf);
+clustGeo.setAttribute('aAlpha',clustAlphaBuf);
+clustGeo.setAttribute('aRnd',new THREE.BufferAttribute(clustRnd,1));
+const clustVS=`
+attribute float aAlpha,aRnd;varying float vA,vR;
+void main(){
+  vA=aAlpha;vR=aRnd;if(vA<.003){gl_PointSize=0.;gl_Position=vec4(9999.,9999.,0.,1.);return;}
+  vec4 mv=modelViewMatrix*vec4(position,1.);float dist=length(mv.xyz);
+  float sz=(1.8+aRnd*3.2+vA*4.5)*250./dist;
+  gl_PointSize=clamp(sz,.3,20.);gl_Position=projectionMatrix*mv;
+}`;
+const clustFS=`
+varying float vA,vR;
+void main(){
+  if(vA<.003)discard;
+  vec2 uv=gl_PointCoord*2.-1.;float d=dot(uv,uv);if(d>1.)discard;
+  float core=1.-smoothstep(0.,.20,d);float glow=1.-smoothstep(0.,1.,d);
+  float ang=atan(uv.y,uv.x);
+  float spoke=pow(abs(cos(ang*3.)),12.)*(1.-smoothstep(0.,1.,sqrt(d)))*vA*.45;
+  vec3 col=mix(vec3(.8,.45,.08),vec3(1.4,1.0,.45),core);
+  gl_FragColor=vec4(col,(core*.88+glow*.30+spoke)*vA);
+}`;
+const clustMat=new THREE.ShaderMaterial({vertexShader:clustVS,fragmentShader:clustFS,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+scene.add(new THREE.Points(clustGeo,clustMat));
+const clustPool=Array.from({length:CLUST_N},()=>({active:false,life:0,maxLife:0,px:0,py:0,pz:0}));
+let clustHead2=0,clusterTimer=0;
+function spawnCluster(wx,wy,wz){
+  for(let k=0;k<5+Math.floor(Math.random()*5);k++){
+    const idx=clustHead2;clustHead2=(clustHead2+1)%CLUST_N;
+    const p=clustPool[idx];p.active=true;
+    p.px=wx+(Math.random()-.5)*28;p.py=wy+(Math.random()-.5)*28;p.pz=wz+(Math.random()-.5)*28;
+    p.maxLife=2.0+Math.random()*3.2;p.life=p.maxLife;
+  }
+}
+function tickClusters(dt){
+  const clustStr=ss(0.68,0.92,memoryLevel);
+  clusterTimer+=dt;
+  if(clusterTimer>0.55&&clustStr>0.01){
+    clusterTimer=0;
+    const ri=Math.floor(Math.random()*MEM_PATH_LEN);
+    if(memPathAge[ri]<0.82){
+      const px2=memPath[ri];
+      const v2=new THREE.Vector3(px2.x,px2.y,0.5).unproject(cam);
+      const d2=v2.sub(cam.position).normalize();
+      const wp=cam.position.clone().addScaledVector(d2,155+Math.random()*110);
+      spawnCluster(wp.x,wp.y,wp.z);
+    }
+  }
+  for(let i=0;i<CLUST_N;i++){
+    const p=clustPool[i];
+    if(!p.active){clustA[i]=0;clustP[i*3]=9999;continue;}
+    p.life-=dt;
+    if(p.life<=0){p.active=false;clustA[i]=0;clustP[i*3]=9999;continue;}
+    clustP[i*3]=p.px;clustP[i*3+1]=p.py;clustP[i*3+2]=p.pz;
+    const f=p.life/p.maxLife;
+    clustA[i]=clamp((f<0.15?f/.15:f<0.6?1:(1-f)/.4)*clustStr*.75,0,1);
+  }
+  clustPosBuf.needsUpdate=true;clustAlphaBuf.needsUpdate=true;
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  SEED BLOOM — delayed burst from click, memory ripple
+// ═════════════════════════════════════════════════════════════════
+const BLOOM_N=200;
+const bloomP=new Float32Array(BLOOM_N*3).fill(9999);
+const bloomA=new Float32Array(BLOOM_N);
+const bloomPool=Array.from({length:BLOOM_N},()=>({active:false,life:0,px:0,py:0,pz:0,vx:0,vy:0,vz:0}));
+let bloomHead=0;
+const bloomGeo=new THREE.BufferGeometry();
+const bloomPosBuf=new THREE.BufferAttribute(bloomP,3);bloomPosBuf.setUsage(THREE.DynamicDrawUsage);
+const bloomAlphaBuf=new THREE.BufferAttribute(bloomA,1);bloomAlphaBuf.setUsage(THREE.DynamicDrawUsage);
+bloomGeo.setAttribute('position',bloomPosBuf);bloomGeo.setAttribute('aAlpha',bloomAlphaBuf);
+const bloomVS=`
+attribute float aAlpha;varying float vA;
+void main(){
+  vA=aAlpha;if(vA<.004){gl_PointSize=0.;gl_Position=vec4(9999.,9999.,0.,1.);return;}
+  vec4 mv=modelViewMatrix*vec4(position,1.);float dist=length(mv.xyz);
+  gl_PointSize=clamp((2.2+vA*7.)*290./dist,.4,28.);gl_Position=projectionMatrix*mv;
+}`;
+const bloomFS=`
+varying float vA;
+void main(){
+  if(vA<.004)discard;
+  vec2 uv=gl_PointCoord*2.-1.;float d=dot(uv,uv);if(d>1.)discard;
+  float core=1.-smoothstep(0.,.18,d);float glow=1.-smoothstep(0.,1.,d);float halo=1.-smoothstep(0.,.60,d);
+  vec3 col=mix(vec3(.45,.22,.90),vec3(1.0,.85,1.3),core*1.4);
+  gl_FragColor=vec4(col,(core*.92+glow*.25+halo*.10)*vA);
+}`;
+const bloomMat=new THREE.ShaderMaterial({vertexShader:bloomVS,fragmentShader:bloomFS,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+scene.add(new THREE.Points(bloomGeo,bloomMat));
+function spawnSeedBloom(nx,ny){
+  const v=new THREE.Vector3(nx,ny,0.5).unproject(cam);
+  const dir=v.sub(cam.position).normalize();
+  const wp=cam.position.clone().addScaledVector(dir,145);
+  const count=10+Math.floor(memoryLevel*22);
+  for(let k=0;k<count;k++){
+    const idx=bloomHead;bloomHead=(bloomHead+1)%BLOOM_N;
+    const p=bloomPool[idx];
+    const theta=Math.random()*TAU,elev=(Math.random()-.5)*Math.PI;
+    const spd=0.7+Math.random()*2.2;
+    p.active=true;p.life=1.0;
+    p.px=wp.x;p.py=wp.y;p.pz=wp.z;
+    p.vx=Math.cos(elev)*Math.cos(theta)*spd;
+    p.vy=Math.sin(elev)*spd*.55;
+    p.vz=Math.cos(elev)*Math.sin(theta)*spd;
+  }
+}
+function tickBloom(dt){
+  for(let i=0;i<BLOOM_N;i++){
+    const p=bloomPool[i];
+    if(!p.active){bloomA[i]=0;bloomP[i*3]=9999;continue;}
+    p.px+=p.vx*dt*58;p.py+=p.vy*dt*58;p.pz+=p.vz*dt*58;
+    p.vx*=0.986;p.vy*=0.986;p.vz*=0.986;
+    p.life=Math.max(0,p.life-dt*0.28);
+    if(p.life<=0){p.active=false;bloomA[i]=0;bloomP[i*3]=9999;continue;}
+    const f=p.life;
+    bloomP[i*3]=p.px;bloomP[i*3+1]=p.py;bloomP[i*3+2]=p.pz;
+    bloomA[i]=clamp(f<0.14?f/.14:(1-f)/.86*f,0,1)*0.82;
+  }
+  bloomPosBuf.needsUpdate=true;bloomAlphaBuf.needsUpdate=true;
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  HDR DETECTION — boost exposure on HDR-capable displays
+// ═════════════════════════════════════════════════════════════════
+const isHDR = window.matchMedia && window.matchMedia('(dynamic-range: high)').matches;
+if(isHDR){
+  R.toneMappingExposure = 2.4;
+}
+
+// ── Seamless loop — all particle emitters are gated by memWindow
+// (sin²(π·t) = 0 at t=0 and t=1) so no wall-clock state crosses the
+// seam boundary. Exported GIF/MP4 frames are frame-perfect by design.
+
+// ═════════════════════════════════════════════════════════════════
+//  BID STATE — driven by WebSocket from bridge
+// ═════════════════════════════════════════════════════════════════
+// bid state vars declared earlier (bidMemoryBoost, bidTotalETH, lastBidderShort, cosmicEra)
+const ERA_NAMES = ['Dormant','Awakening','Active','Transcendent'];
+function updateEra(){ cosmicEra = Math.min(3, Math.floor(bidCount/3)); updateHUD(); }
+
+// ── Auction countdown state ───────────────────────────────────────
+let auctionSecondsLeft = -1;     // -1 = no auction / unknown
+let urgencyLevel       = 0.0;    // 0→1 as auction end approaches (last 60 min)
+let countdownDisplay   = '';     // formatted string for HUD
+
+// ── Outbid / wallet tracking ──────────────────────────────────────
+// Map wallet → mini BH index so we can implode the right one on outbid
+const walletToBH = new Map();
+
+// ── WebSocket bridge connection ───────────────────────────────────
+let ws = null;
+function connectBridge(){
+  try{
+    ws = new WebSocket('ws://localhost:3131');
+    ws.onopen  = ()=>{ console.log('[SS] Bridge connected'); updateHUDBridgeStatus(true); };
+    ws.onclose = ()=>{ console.log('[SS] Bridge disconnected'); updateHUDBridgeStatus(false); setTimeout(connectBridge,3000); };
+    ws.onerror = ()=>{ ws.close(); };
+    ws.onmessage = e=>{
+      let msg; try{ msg=JSON.parse(e.data); }catch(err){ return; }
+
+      // ── BID event ─────────────────────────────────────────────────
+      if(msg.type==='BID'){
+        const walletStr = msg.wallet||'0x000';
+        let wHash = 0;
+        for(let ci=0;ci<walletStr.length;ci++) wHash=(wHash*31+walletStr.charCodeAt(ci))&0xFFFFFF;
+        const bidHue = (wHash % 1000) / 1000;
+        lastBidderShort = walletStr.length>10 ? walletStr.slice(0,6)+'…'+walletStr.slice(-4) : walletStr;
+
+        // Explicit outbid: previous top bidder's BH implodes
+        if(msg.previousBidder && msg.previousBidder.toLowerCase() !== walletStr.toLowerCase()){
+          const prevIdx = walletToBH.get(msg.previousBidder.toLowerCase());
+          if(prevIdx !== undefined && miniGroups[prevIdx] && !miniGroups[prevIdx].imploding){
+            miniGroups[prevIdx].imploding = true;
+            miniGroups[prevIdx].implodeT  = 0.0;
+          }
+        }
+
+        bidCount++;
+        bidTotalETH += parseFloat(msg.amount||0);
+        bidMemoryBoost = clamp(parseFloat(msg.amount||0.1)*3.0, 0.2, 0.9);
+
+        // Track wallet → BH mapping for outbid logic
+        if(!walletToBH.has(walletStr.toLowerCase())){
+          updateBHLifecycle(bidHue);
+          walletToBH.set(walletStr.toLowerCase(), miniGroups.length - 1);
+        }
+        scheduleColorCycle();
+        updateEra();
+        updateHUD();
+      }
+
+      // ── OUTBID event (explicit — bridge knows previous bidder) ─────
+      if(msg.type==='OUTBID'){
+        const prevWallet = (msg.wallet||'').toLowerCase();
+        const prevIdx = walletToBH.get(prevWallet);
+        if(prevIdx !== undefined && miniGroups[prevIdx]){
+          miniGroups[prevIdx].imploding = true;
+          miniGroups[prevIdx].implodeT  = 0.0;
+        }
+      }
+
+      // ── TICK event — auction countdown ────────────────────────────
+      if(msg.type==='TICK'){
+        auctionSecondsLeft = parseInt(msg.secondsLeft) || -1;
+        if(auctionSecondsLeft >= 0){
+          // urgency ramps from 0→1 over the last 3600s (1 hour)
+          urgencyLevel = clamp(1.0 - auctionSecondsLeft / 3600, 0, 1);
+          const h = Math.floor(auctionSecondsLeft / 3600);
+          const m = Math.floor((auctionSecondsLeft % 3600) / 60);
+          const s = auctionSecondsLeft % 60;
+          countdownDisplay = h > 0
+            ? `${h}h ${String(m).padStart(2,'0')}m`
+            : m > 0
+              ? `${m}m ${String(s).padStart(2,'0')}s`
+              : `${s}s`;
+        }
+        updateHUD();
+      }
+
+      // ── MOCK_BID ──────────────────────────────────────────────────
+      if(msg.type==='MOCK_BID'){
+        const mockWallet = msg.wallet || '0xMock…test';
+        const wStr = mockWallet.toLowerCase();
+        lastBidderShort = mockWallet.length>10
+          ? mockWallet.slice(0,6)+'…'+mockWallet.slice(-4) : mockWallet;
+        bidCount++;
+        bidTotalETH += parseFloat(msg.amount||0.1);
+        bidMemoryBoost = clamp(parseFloat(msg.amount||0.1)*3.0, 0.2, 0.9);
+        if(!walletToBH.has(wStr)){
+          updateBHLifecycle(Math.random());
+          walletToBH.set(wStr, miniGroups.length - 1);
+        }
+        scheduleColorCycle();
+        updateEra();
+        updateHUD();
+      }
+
+      // ── MOCK_OUTBID — implode a BH for testing ────────────────────
+      if(msg.type==='MOCK_OUTBID'){
+        const targetIdx = parseInt(msg.bhIndex);
+        if(!isNaN(targetIdx) && miniGroups[targetIdx]){
+          miniGroups[targetIdx].imploding = true;
+          miniGroups[targetIdx].implodeT  = 0.0;
+        }
+      }
+
+      // ── AUCTION_END — final state ─────────────────────────────────
+      if(msg.type==='AUCTION_END'){
+        auctionSecondsLeft = 0;
+        urgencyLevel = 1.0;
+        countdownDisplay = 'ENDED';
+        updateHUD();
+      }
+    };
+  }catch(ex){ console.warn('[SS] Bridge unavailable:', ex.message); }
+}
+connectBridge();
+
+// ═════════════════════════════════════════════════════════════════
+//  HUD OVERLAY
+// ═════════════════════════════════════════════════════════════════
+const hudEl = document.createElement('div');
+hudEl.id = 'ss-hud';
+hudEl.style.cssText = [
+  'position:fixed','top:18px','left:18px','z-index:999',
+  'font-family:monospace','font-size:12px','line-height:1.7',
+  'color:rgba(200,170,255,0.85)',
+  'text-shadow:0 0 8px rgba(120,60,200,0.9)',
+  'pointer-events:none','user-select:none',
+  'background:rgba(0,0,5,0.45)',
+  'border:1px solid rgba(140,80,255,0.25)',
+  'border-radius:6px','padding:8px 14px',
+  'backdrop-filter:blur(4px)',
+  'transition:opacity 0.4s'
+].join(';');
+document.body.appendChild(hudEl);
+
+let hudVisible = true;
+function updateHUD(){
+  if(!hudVisible){ hudEl.style.opacity='0'; return; }
+  hudEl.style.opacity='1';
+
+  // Urgency colour — cool purple → hot red as countdown expires
+  const urgR = Math.round(140 + urgencyLevel*115);
+  const urgG = Math.round(80  - urgencyLevel*60);
+  const urgB = Math.round(200 - urgencyLevel*170);
+  const urgColour = `rgb(${urgR},${urgG},${urgB})`;
+
+  const countdownLine = auctionSecondsLeft < 0
+    ? ''
+    : `ENDS IN : <b style="color:${urgColour}">${countdownDisplay}</b><br>`;
+
+  const urgencyBar = urgencyLevel > 0.05
+    ? `<div style="margin-top:4px;height:2px;background:rgba(80,20,120,0.4);border-radius:1px">
+        <div style="height:2px;width:${Math.round(urgencyLevel*100)}%;background:${urgColour};border-radius:1px;transition:width 1s"></div>
+       </div>`
+    : '';
+
+  hudEl.innerHTML = [
+    `<span style="color:rgba(255,200,100,0.9);font-size:11px">SENTIENT SINGULARITY</span>`,
+    `<span style="color:rgba(120,80,200,0.6);font-size:10px"> ● LIVE</span>`,
+    `──────────────────`,
+    `BIDS &nbsp;&nbsp;&nbsp;: <b style="color:#c8aaff">${bidCount}</b>`,
+    `ETH &nbsp;&nbsp;&nbsp;&nbsp;: <b style="color:#ffcc66">${bidTotalETH.toFixed(3)}</b>`,
+    `BH COUNT: <b style="color:#88ddff">${miniGroups.length}</b> / ${MAX_MINI} <span style="color:rgba(100,180,255,0.5)">${bhDirection===1?'▲':'▼'}</span>`,
+    `ERA &nbsp;&nbsp;&nbsp;&nbsp;: <b style="color:#ffaacc">${ERA_NAMES[cosmicEra]}</b>`,
+    `BIDDER &nbsp;: <span style="color:#aaffdd">${lastBidderShort}</span>`,
+    `CLR CYC : <span style="color:rgba(160,120,255,0.7)">${_colorCycleFrozen ? '❄ frozen' : Math.max(1,60-bidCount)+'m interval'}</span>`,
+    countdownLine ? `──────────────────<br>${countdownLine}` : `──────────────────`,
+    urgencyBar,
+    `<span style="color:rgba(140,100,200,0.5);font-size:10px">H hide · B test bid · O outbid</span>`
+  ].join('<br>');
+}
+function updateHUDBridgeStatus(connected){
+  // Update live dot colour
+  updateHUD();
+}
+updateHUD();
+
+// ═════════════════════════════════════════════════════════════════
+//  KEYBOARD SHORTCUTS
+// ═════════════════════════════════════════════════════════════════
+document.addEventListener('keydown', e=>{
+  if(e.key==='h'||e.key==='H'){
+    hudVisible=!hudVisible; updateHUD();
+  }
+  if(e.key==='b'||e.key==='B'){
+    const fakeWallet = '0xTest'+String(bidCount).padStart(4,'0')+'…b1d';
+    bidCount++;
+    bidTotalETH += 0.1;
+    bidMemoryBoost = 0.5;
+    lastBidderShort = fakeWallet;
+    const wStr = fakeWallet.toLowerCase();
+    if(!walletToBH.has(wStr)){
+      updateBHLifecycle(Math.random());
+      walletToBH.set(wStr, miniGroups.length - 1);
+    }
+    scheduleColorCycle();
+    updateEra();
+    updateHUD();
+  }
+  // O = trigger outbid on the oldest mini BH (index 2 — first bid-spawned)
+  if(e.key==='o'||e.key==='O'){
+    // Find first non-initial BH (skip the 2 original ones)
+    const target = miniGroups.length > 2 ? 2 : miniGroups.length > 0 ? 0 : -1;
+    if(target >= 0 && !miniGroups[target].imploding){
+      miniGroups[target].imploding = true;
+      miniGroups[target].implodeT  = 0.0;
+      console.log('[SS] Test outbid — imploding BH', target);
+    }
+  }
+  // T = test countdown urgency (simulates final 10 minutes)
+  if(e.key==='t'||e.key==='T'){
+    auctionSecondsLeft = 600; // 10 minutes
+    urgencyLevel = clamp(1.0 - 600/3600, 0, 1);
+    countdownDisplay = '10m 00s';
+    // Simulate ticking
+    if(window._mockTick) clearInterval(window._mockTick);
+    window._mockTick = setInterval(()=>{
+      if(auctionSecondsLeft <= 0){ clearInterval(window._mockTick); return; }
+      auctionSecondsLeft--;
+      urgencyLevel = clamp(1.0 - auctionSecondsLeft/3600, 0, 1);
+      const m = Math.floor(auctionSecondsLeft/60);
+      const s = auctionSecondsLeft%60;
+      countdownDisplay = m>0 ? `${m}m ${String(s).padStart(2,'0')}s` : `${s}s`;
+      updateHUD();
+    }, 1000);
+    updateHUD();
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════
+//  RENDER LOOP
+// ═════════════════════════════════════════════════════════════════
+const _invVP = new THREE.Matrix4();
+let frame=0, lastTime=performance.now();
+
+function tick(){
+  requestAnimationFrame(tick);
+  const t=frame/TF; frame=(frame+1)%TF;
+  const now=performance.now();
+  const dt=Math.min((now-lastTime)*0.001, 0.05);
+  lastTime=now;
+
+  // ── Bid memory boost decay — 8s half-life ────────────────────────
+  if(bidMemoryBoost > 0){
+    bidMemoryBoost = Math.max(0, bidMemoryBoost - dt * 0.125);
+  }
+
+  // ── SEAM HARD RESET — frame 0 every loop ─────────────────────────
+  // Clears ALL wall-clock particle state → deterministic seam.
+  if(frame===1){
+    for(let i=0;i<TRAIL_N;i++){trailA[i]=0;trailP[i*3]=9999;}
+    for(let i=0;i<CLUST_N;i++){clustA[i]=0;clustP[i*3]=9999;clustPool[i].active=false;}
+    for(let i=0;i<BLOOM_N;i++){bloomA[i]=0;bloomP[i*3]=9999;bloomPool[i].active=false;}
+    for(let i=0;i<SPLASH_N;i++){splashA[i]=0;splashP[i*3]=9999;splashPool[i].active=false;}
+    trailPosBuf.needsUpdate=true; trailAlphaBuf.needsUpdate=true;
+    clustPosBuf.needsUpdate=true; clustAlphaBuf.needsUpdate=true;
+    bloomPosBuf.needsUpdate=true; bloomAlphaBuf.needsUpdate=true;
+    splashPosBuf.needsUpdate=true; splashAlphaBuf.needsUpdate=true;
+    for(let i=0;i<FLAME_TOT;i++){flameA[i]=0;flameP[i*3]=9999;flamePool[i].active=false;}
+    flamePBuf.needsUpdate=true; flameABuf.needsUpdate=true;
+    trailHead=0; trailTimer=0;
+    clustHead2=0; clusterTimer=0;
+    bloomHead=0; splashHead=0;
+    memoryLevel=0; memAccum=0;
+    cursorStrength=0; cursorStrengthTarget=0;
+    cursorVelMag=0; cursorVel.set(0,0);
+  }
+
+  // ── Cursor smooth ────────────────────────────────────────────────
+  const LAG=0.062;
+  const prevCX=cursor.x, prevCY=cursor.y;
+  cursor.x+=(cursorRaw.x-cursor.x)*LAG;
+  cursor.y+=(cursorRaw.y-cursor.y)*LAG;
+  cursorVel.x+=((cursor.x-prevCX)/Math.max(dt,.001)*.016-cursorVel.x)*.12;
+  cursorVel.y+=((cursor.y-prevCY)/Math.max(dt,.001)*.016-cursorVel.y)*.12;
+  cursorVelMag=cursorVel.length();
+  cursorStrength+=(cursorStrengthTarget-cursorStrength)*.055;
+  cursorStrengthTarget*=.972;
+  tickMemory(dt);
+
+  // ── Memory: t-based floor + bid boost + urgency + interaction ────
+  const memFloor   = tBasedMem(t);
+  const memWindow  = Math.pow(Math.sin(Math.PI*t), 2);
+  _memWindow = memWindow;
+  // Bid boost additive above floor, windowed at seam so loop stays clean
+  const bidBoostWindowed = bidMemoryBoost * memWindow;
+  // Urgency lifts the effective memory ceiling as auction end approaches
+  // At urgencyLevel=1 (final seconds): floor rises by 0.25, cosmos feels frantic
+  const urgencyFloor = urgencyLevel * 0.25;
+  const mem = Math.min(1.0, memFloor + urgencyFloor + memoryLevel*0.45*memWindow + bidBoostWindowed);
+  const cStr = cursorStrength * memWindow;
+  const cur  = cursor;
+
+  // ── Pulse — pure t-based ─────────────────────────────────────────
+  const pulse = 0.12*(0.5+0.5*sn(2,t)) + 0.06*(0.5+0.5*sn(3,t,1.1));
+
+  // ── Camera — pure t-based, always periodic ───────────────────────
+  cam.position.copy(getCam(t));
+  const upEnv=0.15+0.425*(1.0-cn(1,t));
+  const upTilt=upEnv*Math.abs(sn(2,t));
+  cam.up.set(sn(2,t)*.04, 1.-upTilt*.35, cn(2,t)*.03+upTilt*.35);
+  cam.lookAt(0,0,0);
+  const _baseFov=getAdaptiveFOV();
+  cam.fov=_baseFov+5*sn(2,t)+7*upEnv*Math.abs(sn(2,t));
+  cam.updateProjectionMatrix();
+
+  horizonMesh.quaternion.copy(cam.quaternion);
+  tickMinis(t, dt);
+
+  // Accretion disk rotation — k=1, one full turn per loop
+  disk.rotation.z = TAU*t;
+
+  // ── Uniform updates ──────────────────────────────────────────────
+  stMat.uniforms.uT.value=t;
+  stMat.uniforms.uCursor.value.copy(cur);
+  stMat.uniforms.uCursorStr.value=cStr;
+  stMat.uniforms.uMemory.value=mem;
+
+  nebMats.forEach(({mat,bk,bo,bBase})=>{
+    mat.uniforms.uT.value=t;
+    mat.uniforms.uOpa.value=bBase*(.65+.35*(.5+.5*sn(bk,t,bo)));
+    mat.uniforms.uCursor.value.copy(cur);
+    mat.uniforms.uCursorStr.value=cStr;
+    mat.uniforms.uMemory.value=mem;
+  });
+
+  cometMats.forEach(mat=>{
+    mat.uniforms.uT.value=t;
+    mat.uniforms.uCursor.value.copy(cur);
+    mat.uniforms.uCursorStr.value=cStr;
+    mat.uniforms.uMemory.value=mem;
+  });
+
+  horizonMat.uniforms.uT.value=t;
+  horizonMat.uniforms.uMemory.value=mem;
+  horizonMat.uniforms.uCursorStr.value=cStr;
+  horizonMat.uniforms.uCursor.value.copy(cur);
+  horizonMat.uniforms.uPulse.value=pulse;
+
+  diskMat.uniforms.uT.value=t;
+  diskMat.uniforms.uMemory.value=mem;
+  diskMat.uniforms.uCursorStr.value=cStr;
+  diskMat.uniforms.uCursor.value.copy(cur);
+
+  lensMat.uniforms.uT.value=t;
+  lensMat.uniforms.uMemory.value=mem;
+
+  singMat.uniforms.uT.value=t;
+  singMat.uniforms.uMemory.value=mem;
+
+  infallMat.uniforms.uT.value=t;
+  infallMat.uniforms.uMemory.value=mem;
+
+  ghostRingMats.forEach(m=>{m.uniforms.uT.value=t; m.uniforms.uMemory.value=mem;});
+
+  wpMats.forEach(mat=>{
+    mat.uniforms.uT.value=t;
+    mat.uniforms.uCursorStr.value=cStr;
+    mat.uniforms.uMemory.value=mem;
+  });
+
+  rockFillLight.position.copy(cam.position).multiplyScalar(0.6);
+
+  const memGlow=mem*mem;
+  voidLight.intensity=0.2+memGlow*3.5 + urgencyLevel*1.5;
+  const voidHue = ((0.78 - memGlow*0.35 - urgencyLevel*0.45)+1.0)%1.0;
+  voidLight.color.setHSL(voidHue, 0.9, 0.5);
+  ambient.intensity=0.45+memFloor*0.25+urgencyLevel*0.15;
+
+  // Particle systems — all emitters gated by memWindow for seamless loop
+  rockTick_t = t;
+  if(memWindow > 0.04){
+    tickTrails(dt);
+    tickClusters(dt);
+    tickBloom(dt);
+  }
+  tickRocks(dt);
+
+  R.render(scene,cam);
+}
+requestAnimationFrame(tick);
+
+}); // end load
+</script>
+</body>
+</html>

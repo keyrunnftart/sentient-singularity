@@ -1,0 +1,16 @@
+{
+  "name": "sentient-singularity-bridge",
+  "version": "1.0.0",
+  "description": "WebSocket bridge — Base Sepolia auction → Sentient Singularity animation",
+  "main": "server.js",
+  "scripts": {
+    "mock": "cross-env MOCK=1 node server.js",
+    "live": "cross-env MOCK=0 node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
+  }
+}
