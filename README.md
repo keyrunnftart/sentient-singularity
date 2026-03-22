@@ -110,8 +110,6 @@ $env:MOCK="1"; node server.js
 - **Synthesis Open Track** — best overall synthesis of agent behaviour + Ethereum infrastructure
 - **Let the Agent Cook** — fully autonomous: listens, decides, acts, logs. Zero human intervention.
 - **Agents With Receipts ERC-8004** — agent registered on-chain with verifiable identity and execution receipts
-- **ENS Open Integration** — ENS-ready bidder identity; wallet addresses resolvable via ENS throughout the auction
-- **Lit Protocol** — sealed bid memory and per-bidder wallet hue as dark knowledge primitives
 
 ---
 
