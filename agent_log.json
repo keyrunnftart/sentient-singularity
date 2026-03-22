@@ -4,7 +4,7 @@
   "network": "base-sepolia",
   "chain_id": 84532,
   "session_start": "2026-03-22T00:00:00.000Z",
-  "auction_contract": "DEPLOY_ADDRESS_HERE",
+  "auction_contract": "0x1f0c946f0ee87acb268d50ede6c9b4d010af65d2",
   "execution_log": [
     {
       "ts": "2026-03-22T00:00:00.000Z",
