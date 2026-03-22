@@ -130,3 +130,6 @@ Second entry for The Synthesis Hackathon 2026 by [@keyrunnftart](https://twitter
 First entry: [Cosmic Emergence](https://github.com/keyrunnftart/cosmic-emergence) — particles + phases driven by Sepolia bids.
 
 *Sentient Singularity goes deeper: physics, memory, breathing, implosion. The auction is not just an input — it is the artwork's nervous system.*
+## Live Animation
+
+https://ipfs.io/ipfs/bafkreihzljfio77riy4yryct2lkm3rqrxd7624fqzfqcunaipfmdoelqrq
