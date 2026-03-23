@@ -137,3 +137,7 @@ https://ipfs.io/ipfs/bafkreihzljfio77riy4yryct2lkm3rqrxd7624fqzfqcunaipfmdoelqrq
 ## Live Hackathon Page
 
 https://keyrunnft.art/hackathon#sentient-singularity
+
+## Tweet
+
+https://x.com/keyrunnftart/status/2035782430553178583
