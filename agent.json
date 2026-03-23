@@ -4,7 +4,7 @@
   "description": "Autonomous agent that evolves a living black hole constellation in response to SuperRare auction activity on Base Sepolia. Each bid spawns or implodes mini black holes, modulates visual memory, and drives the cosmos through four eras of consciousness. The auction is not just an input \u2014 it is the artwork's nervous system.",
   "operator_wallet": "0xD0490ADeAa23cd45846372Aa09317a57A8880200",
   "erc8004_identity": {
-    "participant_id": "88ad5e14c73546a08cfd8db43d94f02c",
+    "participant_id": "[redacted-synthesis-internal-id]",
     "registration_tx": "0x8cfda7cf5391a7085d2920c0b0fdb0d6c95d60bf3b588d5a854149aaed73d344",
     "chain": "base-mainnet",
     "explorer": "https://basescan.org/tx/0x8cfda7cf5391a7085d2920c0b0fdb0d6c95d60bf3b588d5a854149aaed73d344"
