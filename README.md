@@ -133,3 +133,7 @@ First entry: [Cosmic Emergence](https://github.com/keyrunnftart/cosmic-emergence
 ## Live Animation
 
 https://ipfs.io/ipfs/bafkreihzljfio77riy4yryct2lkm3rqrxd7624fqzfqcunaipfmdoelqrq
+
+## Live Hackathon Page
+
+https://keyrunnft.art/hackathon#sentient-singularity
