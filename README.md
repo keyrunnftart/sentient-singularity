@@ -1,3 +1,5 @@
+![Sentient Singularity — Living black hole constellation on Base Sepolia](./screenshots/cover.png)
+
 # Sentient Singularity
 
 > *Each bid summons a new singularity. The cosmos grows denser with desire.*
