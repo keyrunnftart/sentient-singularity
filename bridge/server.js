@@ -19,7 +19,7 @@ const POLL_MS           = 8000;
 const MOCK_BID_MS       = 4000;                        // bid every 4s in mock
 const MOCK_AUCTION_SECS = parseInt(process.env.MOCK_DURATION) || 30; // default 30s
 const RPC_URL           = process.env.RPC_URL
-  || 'https://base-sepolia.infura.io/v3/' + (process.env.INFURA_KEY || '[REDACTED-ROTATED]');
+  || 'https://base-sepolia.infura.io/v3/' + (process.env.INFURA_KEY || '');
 const AUCTION_ADDR      = (process.env.AUCTION_ADDRESS || '').toLowerCase();
 const NEW_BID_TOPIC     = '0x3fab86a1207bdcfe3976d0d9df25f263d45ae8d7f8a0a663e17f21e4eb24c1c2';
 
